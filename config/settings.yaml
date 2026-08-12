@@ -1,0 +1,53 @@
+# FPL AI Predictor - configuration
+# Re-verify the "season" block at the start of each season against the official FPL rules page -
+# transfer caps and chip structure have changed between seasons before.
+
+season:
+  label: "2026-27"
+  current_gameweek_at_setup: null   # filled in by the pipeline once the season starts; null = pre-season / cold-start
+
+team:
+  # fpl_team_id itself lives in .env (FPL_TEAM_ID) - it's public but kept out of this file so
+  # settings.yaml stays safe to share/back up without editing it first.
+  mini_league_ids: []                # classic mini-league IDs to track for rival/rank-aware strategy (Phase 7)
+
+rules:
+  budget_million: 100.0
+  squad_size: 15
+  squad_composition:
+    GKP: 2
+    DEF: 5
+    MID: 5
+    FWD: 3
+  starting_xi_size: 11
+  formation_min:
+    GKP: 1
+    DEF: 3
+    MID: 2
+    FWD: 1
+  max_players_per_club: 3
+  free_transfers_per_week: 1
+  free_transfers_max_banked: 5
+  points_hit_per_extra_transfer: -4
+  captain_multiplier: 2
+  triple_captain_multiplier: 3
+
+chips:
+  # One full set (wildcard, free_hit, bench_boost, triple_captain) per half-season.
+  # First-half chips are forfeited if unused by this deadline.
+  first_half_deadline_gw: 19
+  first_half_deadline_utc: "2027-01-02T13:30:00Z"
+  chips_per_gameweek_limit: 1
+
+model:
+  cold_start_gw_threshold: 4        # use cold_start.py priors until this many current-season GWs exist, then switch to the trained model
+  near_term_horizon_gws: 5          # tactical (transfer_optimizer) look-ahead window
+  season_planner_refresh: "after_each_gameweek"
+
+strategy:
+  differential_aggressiveness: "balanced"   # one of: template, balanced, differential - manual override on top of mini-league-driven posture
+
+refresh:
+  scheduled_times_daily: ["08:00", "13:00", "20:00"]
+  deadline_window_hours: 24
+  deadline_window_frequency_minutes: 60

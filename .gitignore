@@ -1,0 +1,33 @@
+# Environment
+.venv/
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+
+# Data (regenerable from the pipeline / contains personal squad+news data)
+data/raw/**
+data/external/**
+data/processed/**
+data/news/**
+data/db/*.db
+!data/**/.gitkeep
+
+# Model artifacts (regenerable via training)
+models/artifacts/**
+!models/artifacts/.gitkeep
+
+# Streamlit
+.streamlit/
+
+# Pytest
+.pytest_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
