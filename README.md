@@ -14,5 +14,5 @@ copy .env.example .env   # then fill in FPL_TEAM_ID
 
 ## Status
 
-Phase 0 (environment + skeleton) complete. See `docs/IMPLEMENTATION_PLAN.md` for the full
-phase-by-phase plan and current architecture decisions.
+Phase 0 (environment + skeleton) and Phase 1 (data layer) complete. See
+`docs/IMPLEMENTATION_PLAN.md` for the full phase-by-phase plan and current architecture decisions.

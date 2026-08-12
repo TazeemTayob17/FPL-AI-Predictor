@@ -117,7 +117,7 @@ Each phase lists concrete steps, its deliverable, and how to know it's actually 
 - `config/settings.yaml`: season string, `team_id` placeholder, chip-window dates, free-transfer cap, cold-start GW threshold, refresh cadence.
 - `data/db/fpl.db` created from `storage/schema.sql` (empty tables: `player_status`, `overrides`, `snapshots`, `run_history`).
 - **Deliverable / done when**: `python -m fpl_agent.storage.db --init` creates the DB with no errors; `pytest` runs (even with zero tests) inside the venv.
-
+ 
 ### Phase 1 — Data Layer (Live API + Historical)
 - `ingestion/fpl_api.py`: typed fetchers for bootstrap-static, fixtures, `entry/{team_id}`, `entry/{team_id}/event/{gw}/picks`, `element-summary/{id}`, `event/{gw}/live`.
 - `ingestion/cache.py`: writes every raw pull to `data/raw/<endpoint>/<timestamp>.json`, never overwritten.
