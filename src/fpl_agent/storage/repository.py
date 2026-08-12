@@ -13,7 +13,6 @@ from fpl_agent.storage.db import DEFAULT_DB_PATH, get_connection
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
 
-# FPL API chip-name strings for gameweeks that don't consume a free transfer.
 UNLIMITED_TRANSFER_CHIPS = {"wildcard", "freehit"}
 
 PLAYER_COLUMNS = [

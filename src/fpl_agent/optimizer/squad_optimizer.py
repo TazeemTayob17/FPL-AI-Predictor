@@ -7,8 +7,8 @@ from ortools.sat.python import cp_model
 
 from fpl_agent.optimizer.constraints import SquadRules, load_rules
 
-POINTS_SCALE = 100   # preserves 2 decimal places of predicted_points in CP-SAT's integer objective
-COST_SCALE = 10      # now_cost_million -> tenths of a million, matching the FPL API's native integer unit
+POINTS_SCALE = 100
+COST_SCALE = 10
 
 
 class InfeasibleSquadError(Exception):
@@ -61,7 +61,7 @@ def select_starting_xi(squad: pd.DataFrame, rules: SquadRules | None = None) -> 
     model.add(sum(starts) == rules.starting_xi_size)
 
     gkp_idx = squad.index[squad["position"] == "GKP"].tolist()
-    model.add(sum(starts[i] for i in gkp_idx) == 1)   # exactly one keeper plays; a football rule, not a config value
+    model.add(sum(starts[i] for i in gkp_idx) == 1)
 
     for position in ("DEF", "MID", "FWD"):
         idx = squad.index[squad["position"] == position].tolist()

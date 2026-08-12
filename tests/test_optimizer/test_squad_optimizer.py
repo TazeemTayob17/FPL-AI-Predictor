@@ -6,8 +6,6 @@ import pytest
 from fpl_agent.optimizer.constraints import SquadRules
 from fpl_agent.optimizer.squad_optimizer import InfeasibleSquadError, select_squad, select_starting_xi
 
-# Small ruleset (6-man squad, 4-man XI) so the optimum below is verifiable by hand, distinct from the
-# real 15-man/100m season rules exercised separately in test_constraints.py.
 SMALL_RULES = SquadRules(
     budget_million=34.0,
     squad_size=6,
@@ -28,9 +26,6 @@ def _player(name, club, position, cost, points):
     }
 
 
-# 10 candidates, one clearly-better and one clearly-worse option per required slot, plus a budget
-# tight enough (34) to force picking fwd_cheap (7) over the higher-scoring fwd_expensive (12, would
-# push the cheapest valid combo from 34 to 39) - this is what proves the budget constraint actually bites.
 OPTIMUM_POOL = pd.DataFrame(
     [
         _player("gk_good", "GKC", "GKP", 5, 40),
@@ -80,8 +75,6 @@ def test_select_squad_infeasible_when_club_cap_blocks_composition():
         select_squad(one_club_defenders, capped_rules)
 
 
-# 8-player squad (2 GKP, 3 DEF, 2 MID, 1 FWD) with formation_min summing exactly to the 5-man XI size,
-# so the only real choice is *which* 2 of 3 DEF and 1 of 2 MID start - fully hand-calculable.
 XI_RULES = SquadRules(
     budget_million=100.0, squad_size=8,
     squad_composition={"GKP": 2, "DEF": 3, "MID": 2, "FWD": 1},
