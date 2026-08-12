@@ -14,3 +14,6 @@ def test_load_rules_matches_confirmed_season_config():
     assert rules.max_players_per_club == 3
     assert rules.captain_multiplier == 2
     assert rules.triple_captain_multiplier == 3
+    assert rules.free_transfers_per_week == 1
+    assert rules.free_transfers_max_banked == 5
+    assert rules.points_hit_per_extra_transfer == -4

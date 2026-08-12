@@ -25,6 +25,9 @@ class SquadRules:
     max_players_per_club: int
     captain_multiplier: int
     triple_captain_multiplier: int
+    free_transfers_per_week: int = 1
+    free_transfers_max_banked: int = 5
+    points_hit_per_extra_transfer: int = -4
 
 
 def load_rules(settings_path: Path = SETTINGS_PATH) -> SquadRules:
@@ -41,4 +44,7 @@ def load_rules(settings_path: Path = SETTINGS_PATH) -> SquadRules:
         max_players_per_club=int(rules["max_players_per_club"]),
         captain_multiplier=int(rules["captain_multiplier"]),
         triple_captain_multiplier=int(rules["triple_captain_multiplier"]),
+        free_transfers_per_week=int(rules["free_transfers_per_week"]),
+        free_transfers_max_banked=int(rules["free_transfers_max_banked"]),
+        points_hit_per_extra_transfer=int(rules["points_hit_per_extra_transfer"]),
     )

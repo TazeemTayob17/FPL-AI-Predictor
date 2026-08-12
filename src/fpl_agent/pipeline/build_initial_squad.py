@@ -1,8 +1,4 @@
-"""Entrypoint: runs the naive predictor + squad optimizer + captaincy against real local player data.
-
-Superseded by weekly_pipeline.py once live team sync (Phase 3) and the real model (Phase 4) land;
-useful now to pick the initial pre-season squad and to sanity-check the optimizer end to end.
-"""
+"""Entrypoint: runs the naive predictor + squad optimizer + captaincy against real local player data."""
 
 from __future__ import annotations
 
@@ -29,7 +25,7 @@ def build_initial_squad() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     return squad, starting_xi, bench
 
 
-def _print_report(squad: pd.DataFrame, starting_xi: pd.DataFrame, bench: pd.DataFrame) -> None:
+def print_squad_report(squad: pd.DataFrame, starting_xi: pd.DataFrame, bench: pd.DataFrame) -> None:
     """Prints the squad, starting XI, bench, and captaincy choice in a human-readable form."""
     rules = load_rules()
     columns = ["web_name", "team_short", "position", "now_cost_million", "predicted_points"]
@@ -49,4 +45,4 @@ def _print_report(squad: pd.DataFrame, starting_xi: pd.DataFrame, bench: pd.Data
 
 
 if __name__ == "__main__":
-    _print_report(*build_initial_squad())
+    print_squad_report(*build_initial_squad())

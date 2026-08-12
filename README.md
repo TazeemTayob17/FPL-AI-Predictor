@@ -14,8 +14,13 @@ copy .env.example .env   # then fill in FPL_TEAM_ID
 
 ## Status
 
-Phase 0 (environment + skeleton), Phase 1 (data layer), and Phase 2 (rules engine + CP-SAT
-optimizer with a naive last-season-points predictor) complete. Run
-`python -m fpl_agent.pipeline.build_initial_squad` to see a rules-compliant 15-man squad,
-starting XI, and captain picked from real local player data. See `docs/IMPLEMENTATION_PLAN.md`
-for the full phase-by-phase plan and current architecture decisions.
+Phase 0 (environment + skeleton), Phase 1 (data layer), Phase 2 (rules engine + CP-SAT
+optimizer with a naive last-season-points predictor), and Phase 3 (live team sync) complete.
+
+Run `python -m fpl_agent.pipeline.sync_team` to sync your real squad, bank, free transfers,
+and chips once the FPL API has them (i.e. after that gameweek's deadline passes) - before
+then, it automatically falls back to a recommended squad from
+`python -m fpl_agent.pipeline.build_initial_squad`, for you to enter yourself.
+
+See `docs/IMPLEMENTATION_PLAN.md` for the full phase-by-phase plan and current architecture
+decisions.

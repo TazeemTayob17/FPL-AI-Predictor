@@ -46,9 +46,16 @@ def get_entry(team_id: int) -> dict:
 
 
 def get_entry_picks(team_id: int, gameweek: int) -> dict:
-    """Fetches a manager's squad picks, captain, and chip used for one gameweek."""
+    """Fetches a manager's squad picks and chip used for one gameweek; 404s before that gameweek's deadline."""
     data = _get(f"{BASE_URL}/entry/{team_id}/event/{gameweek}/picks/")
     save_json(f"entry/{team_id}/picks_gw{gameweek}", data)
+    return data
+
+
+def get_entry_history(team_id: int) -> dict:
+    """Fetches a manager's full-season history: per-gameweek bank/value/transfers, and chips used."""
+    data = _get(f"{BASE_URL}/entry/{team_id}/history/")
+    save_json(f"entry/{team_id}/history", data)
     return data
 
 

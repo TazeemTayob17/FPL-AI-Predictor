@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
 
-from fpl_agent.storage.db import get_connection
+from fpl_agent.optimizer.constraints import SquadRules
+from fpl_agent.storage.db import DEFAULT_DB_PATH, get_connection
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
+
+# FPL API chip-name strings for gameweeks that don't consume a free transfer.
+UNLIMITED_TRANSFER_CHIPS = {"wildcard", "freehit"}
 
 PLAYER_COLUMNS = [
     "player_id", "web_name", "web_name_full", "team_name", "team_short", "position",
@@ -127,6 +132,78 @@ def _write_player_status(players: pd.DataFrame) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def compute_free_transfers(history: dict, rules: SquadRules) -> int:
+    """Replays each gameweek's transfers to compute free transfers banked, skipping GW1 and wildcard/free-hit weeks."""
+    chip_gameweeks = {
+        chip["event"] for chip in history.get("chips", []) if chip.get("name") in UNLIMITED_TRANSFER_CHIPS
+    }
+    free_transfers = rules.free_transfers_per_week
+    for gw_entry in history.get("current", []):
+        gameweek = gw_entry.get("event")
+        if gameweek == 1:
+            continue
+        if gameweek in chip_gameweeks:
+            free_transfers = min(rules.free_transfers_max_banked, free_transfers + rules.free_transfers_per_week)
+            continue
+        transfers_made = gw_entry.get("event_transfers", 0) or 0
+        used = min(free_transfers, transfers_made)
+        free_transfers = min(rules.free_transfers_max_banked, free_transfers - used + rules.free_transfers_per_week)
+    return free_transfers
+
+
+def save_team_snapshot(
+    entry: dict, history: dict, picks: dict | None, rules: SquadRules, db_path: Path = DEFAULT_DB_PATH
+) -> dict | None:
+    """Normalizes live entry/history/picks data into the team_snapshot table; returns None if picks aren't live yet."""
+    if picks is None:
+        return None
+
+    current_history = history.get("current", [])
+    latest = current_history[-1] if current_history else {}
+    bank = _tenths_to_million(latest.get("bank"))
+    squad_value = _tenths_to_million(latest.get("value"))
+    free_transfers = compute_free_transfers(history, rules)
+    chips_used = [{"chip": chip["name"], "gameweek": chip["event"]} for chip in history.get("chips", [])]
+    pick_rows = [
+        {
+            "player_id": pick["element"],
+            "is_captain": pick["is_captain"],
+            "is_vice_captain": pick["is_vice_captain"],
+            "multiplier": pick["multiplier"],
+            "position": pick["position"],
+        }
+        for pick in picks.get("picks", [])
+    ]
+    gameweek = picks.get("entry_history", {}).get("event")
+
+    conn = get_connection(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO team_snapshot (gameweek, bank, squad_value, free_transfers, chips_used_json, picks_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (gameweek, bank, squad_value, free_transfers, json.dumps(chips_used), json.dumps(pick_rows)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {
+        "gameweek": gameweek,
+        "bank": bank,
+        "squad_value": squad_value,
+        "free_transfers": free_transfers,
+        "chips_used": chips_used,
+        "picks": pick_rows,
+    }
+
+
+def _tenths_to_million(value: object) -> float | None:
+    """Converts a tenths-of-a-million integer (the API's bank/value unit) to millions, or None if unset."""
+    return None if value is None else value / 10
 
 
 def _float_or_none(value: object) -> float | None:
