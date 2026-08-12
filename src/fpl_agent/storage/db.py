@@ -1,5 +1,3 @@
-"""SQLite connection and schema initialization for the FPL Agent local data store."""
-
 from __future__ import annotations
 
 import argparse
