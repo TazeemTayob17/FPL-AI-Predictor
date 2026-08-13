@@ -46,7 +46,8 @@ def walk_forward_backtest(table: pd.DataFrame, target_season: str, min_gw: int =
         train_mask = (table["season"] < target_season) | ((table["season"] == target_season) & (table["GW"] < gw))
         eval_mask = (table["season"] == target_season) & (table["GW"] == gw)
         train_rows = table[train_mask]
-        keep_cols = ["name", "position", "GW", "total_points", "selected", *columns]
+        id_cols = [c for c in ("name", "position", "GW", "total_points", "selected") if c not in columns]
+        keep_cols = id_cols + columns
         eval_rows = table.loc[eval_mask, keep_cols].copy()
         if eval_rows.empty:
             continue

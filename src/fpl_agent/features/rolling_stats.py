@@ -9,7 +9,7 @@ WINDOWS = (3, 5, 10)
 ROLLING_STAT_COLUMNS = (
     "total_points", "minutes", "goals_scored", "assists", "bps", "clean_sheets", "saves",
     "expected_goals", "expected_assists", "expected_goal_involvements", "expected_goals_conceded",
-    "defensive_contribution",
+    "defensive_contribution", "influence", "creativity", "threat", "ict_index",
 )
 
 

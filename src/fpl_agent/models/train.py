@@ -24,7 +24,7 @@ LGB_PARAMS = {"objective": "regression", "metric": "mae", "verbosity": -1, "num_
 def feature_columns(table: pd.DataFrame) -> list[str]:
     """Lists the model's input features: rolling-window columns plus known-in-advance fixture/price context."""
     roll_cols = [c for c in table.columns if any(c.endswith(f"_roll{w}") for w in WINDOWS)]
-    context_cols = [c for c in ("difficulty", "opponent_attack_strength", "opponent_defence_strength", "fixture_count", "value") if c in table.columns]
+    context_cols = [c for c in ("difficulty", "opponent_attack_strength", "opponent_defence_strength", "fixture_count", "value", "selected") if c in table.columns]
     return roll_cols + context_cols
 
 

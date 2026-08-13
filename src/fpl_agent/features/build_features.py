@@ -11,7 +11,7 @@ ADDITIVE_GW_STATS = (
     "total_points", "minutes", "goals_scored", "assists", "clean_sheets", "goals_conceded",
     "own_goals", "penalties_saved", "penalties_missed", "yellow_cards", "red_cards", "saves",
     "bonus", "bps", "starts", "expected_goals", "expected_assists", "expected_goal_involvements",
-    "expected_goals_conceded", "defensive_contribution",
+    "expected_goals_conceded", "defensive_contribution", "influence", "creativity", "threat", "ict_index",
 )
 
 POSITION_ALIASES = {"GK": "GKP", "GKP": "GKP", "AM": "MID", "DEF": "DEF", "MID": "MID", "FWD": "FWD"}

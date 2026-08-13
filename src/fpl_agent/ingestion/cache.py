@@ -18,3 +18,11 @@ def save_json(subdir: str, payload: object) -> Path:
     path = target_dir / f"{timestamp}.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
+
+
+def load_latest_json(subdir: str) -> dict | list | None:
+    """Reads the most recently saved raw JSON file under data/raw/<subdir>/, or None if none exist."""
+    files = sorted((RAW_DIR / subdir).glob("*.json"))
+    if not files:
+        return None
+    return json.loads(files[-1].read_text(encoding="utf-8"))
