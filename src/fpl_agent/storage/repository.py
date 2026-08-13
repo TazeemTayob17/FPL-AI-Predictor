@@ -16,7 +16,7 @@ PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
 UNLIMITED_TRANSFER_CHIPS = {"wildcard", "freehit"}
 
 PLAYER_COLUMNS = [
-    "player_id", "web_name", "web_name_full", "team_name", "team_short", "position",
+    "player_id", "web_name", "web_name_full", "team_id", "team_name", "team_short", "position",
     "now_cost_million", "form", "total_points", "selected_by_percent",
     "status", "news", "chance_of_playing_this_round", "chance_of_playing_next_round",
 ]
@@ -55,7 +55,7 @@ def _build_players_frame(bootstrap: dict) -> pd.DataFrame:
     players["form"] = pd.to_numeric(players["form"], errors="coerce")
     players["selected_by_percent"] = pd.to_numeric(players["selected_by_percent"], errors="coerce")
     players["web_name_full"] = players["first_name"] + " " + players["second_name"]
-    players = players.rename(columns={"id": "player_id"})
+    players = players.rename(columns={"id": "player_id", "team": "team_id"})
     return players[PLAYER_COLUMNS]
 
 
