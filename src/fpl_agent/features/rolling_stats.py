@@ -27,3 +27,13 @@ def add_rolling_features(
             rolled = shifted.groupby(group_cols).rolling(window, min_periods=1).mean()
             table[f"{column}_roll{window}"] = rolled.reset_index(level=list(range(len(group_keys))), drop=True)
     return table
+
+
+def add_minutes_volatility(gw_table: pd.DataFrame, group_keys: list[str], window: int = 10) -> pd.DataFrame:
+    """Adds a rolling standard deviation of minutes played, using only games strictly before the current row."""
+    table = gw_table.sort_values(group_keys + ["GW"]).reset_index(drop=True)
+    shifted = table.groupby(group_keys, sort=False)["minutes"].shift(1)
+    group_cols = [table[key] for key in group_keys]
+    rolled_std = shifted.groupby(group_cols).rolling(window, min_periods=1).std()
+    table["minutes_volatility"] = rolled_std.reset_index(level=list(range(len(group_keys))), drop=True).fillna(0)
+    return table

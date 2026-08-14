@@ -1,8 +1,9 @@
 """Checks rolling-window features use only strictly-prior games and never leak the current or future row."""
 
 import pandas as pd
+import pytest
 
-from fpl_agent.features.rolling_stats import add_rolling_features
+from fpl_agent.features.rolling_stats import add_minutes_volatility, add_rolling_features
 
 DATA = pd.DataFrame(
     {
@@ -39,3 +40,18 @@ def test_missing_stat_columns_are_skipped_without_error():
     """A requested stat column absent from the input frame is silently skipped, not a KeyError."""
     result = add_rolling_features(DATA, group_keys=["season", "element"], stat_columns=("total_points", "does_not_exist"))
     assert "does_not_exist_roll3" not in result.columns
+
+
+def test_minutes_volatility_matches_the_standard_deviation_of_prior_games():
+    """A player alternating 90/0/90 minutes should show GW4 volatility equal to std([90, 0, 90]), not including GW4 itself."""
+    data = pd.DataFrame({"season": ["s"] * 4, "element": [1] * 4, "GW": [1, 2, 3, 4], "minutes": [90, 0, 90, 0]})
+    result = add_minutes_volatility(data, group_keys=["season", "element"], window=10)
+    row = result[result["GW"] == 4].iloc[0]
+    assert row["minutes_volatility"] == pytest.approx(pd.Series([90, 0, 90]).std())
+
+
+def test_minutes_volatility_is_zero_for_a_consistent_starter():
+    """A player who always plays 90 minutes must show zero volatility, not NaN or a spurious nonzero value."""
+    data = pd.DataFrame({"season": ["s"] * 4, "element": [1] * 4, "GW": [1, 2, 3, 4], "minutes": [90, 90, 90, 90]})
+    result = add_minutes_volatility(data, group_keys=["season", "element"], window=10)
+    assert (result["minutes_volatility"] == 0.0).all()
