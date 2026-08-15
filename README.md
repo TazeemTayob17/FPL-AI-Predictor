@@ -16,7 +16,8 @@ copy .env.example .env   # then fill in FPL_TEAM_ID
 
 Phase 0 (environment + skeleton), Phase 1 (data layer), Phase 2 (rules engine + CP-SAT
 optimizer with a naive last-season-points predictor), Phase 3 (live team sync), Phase 4
-(real prediction model), and Phase 5 (weekly transfer + captaincy logic) complete.
+(real prediction model), Phase 5 (weekly transfer + captaincy logic), and Phase 6
+(injury/news layer) complete.
 
 Run `python -m fpl_agent.pipeline.sync_team` to sync your real squad, bank, free transfers,
 and chips once the FPL API has them (i.e. after that gameweek's deadline passes) - before
@@ -34,6 +35,13 @@ hit cost into the objective and explaining every recommendation in plain languag
 (injury doubt + minutes volatility) alongside the predicted-points ranking. Run
 `python scripts/replay_gameweek.py <season> <gameweek>` to see both in action against a real
 past gameweek, with the actual outcome shown alongside for sanity-checking.
+
+`ingestion/news_rss.py` pulls BBC Sport's per-team feeds (all 20 clubs) plus Sky Sports'
+general football feed, matching player mentions by name. `ingestion/news_scrape.py` is a
+rate-limited (3h), cached fallback scraper for Fantasy Football Scout's injury table.
+`overrides/manager.py` provides manual override CRUD (injury flags, "don't sell") that always
+takes precedence over automated data, soft-deleted for a full audit trail, and visibly badged
+"(manual)" on the Player Explorer page - automated refreshes never touch the overrides table.
 
 See `docs/IMPLEMENTATION_PLAN.md` for the full phase-by-phase plan and current architecture
 decisions.

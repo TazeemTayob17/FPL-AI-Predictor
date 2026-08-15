@@ -133,6 +133,48 @@ def _write_player_status(players: pd.DataFrame) -> None:
         conn.close()
 
 
+def enrich_player_status_from_scrape(scrape_rows: pd.DataFrame, db_path: Path = DEFAULT_DB_PATH) -> None:
+    """Overrides a player's automated status only when scraped data is more cautious than what's already stored."""
+    conn = get_connection(db_path)
+    try:
+        for row in scrape_rows.itertuples():
+            current = conn.execute(
+                "SELECT chance_of_playing_next_round FROM player_status WHERE player_id = ?", (int(row.player_id),)
+            ).fetchone()
+            current_chance = current["chance_of_playing_next_round"] if current else None
+            if current_chance is not None and row.chance_of_playing_next_round >= current_chance:
+                continue
+            conn.execute(
+                """
+                UPDATE player_status
+                SET status = ?, chance_of_playing_next_round = ?, news = ?, source = 'scrape', updated_at = datetime('now')
+                WHERE player_id = ?
+                """,
+                (row.status, int(row.chance_of_playing_next_round), row.news, int(row.player_id)),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def enrich_player_status_from_rss(rss_rows: pd.DataFrame, db_path: Path = DEFAULT_DB_PATH) -> None:
+    """Appends RSS-sourced news text to player_status without touching the structured status/chance fields."""
+    conn = get_connection(db_path)
+    try:
+        for row in rss_rows.itertuples():
+            conn.execute(
+                """
+                UPDATE player_status
+                SET news = ?, news_added = ?, source = 'rss', updated_at = datetime('now')
+                WHERE player_id = ?
+                """,
+                (row.news, row.news_added, int(row.player_id)),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def compute_free_transfers(history: dict, rules: SquadRules) -> int:
     """Replays each gameweek's transfers to compute free transfers banked, skipping GW1 and wildcard/free-hit weeks."""
     chip_gameweeks = {
