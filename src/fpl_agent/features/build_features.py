@@ -18,13 +18,18 @@ POSITION_ALIASES = {"GK": "GKP", "GKP": "GKP", "AM": "MID", "DEF": "DEF", "MID":
 
 
 def collapse_to_gameweek(gw_rows: pd.DataFrame) -> pd.DataFrame:
-    """Sums additive per-fixture stats into one row per player per gameweek, correctly handling double-gameweeks."""
+    """Sums additive per-fixture stats into one row per player per gameweek, correctly handling double-gameweeks.
+
+    `name`/`position`/`team` are carried through when present (historical vaastav rows), but aren't required -
+    a live element-summary pull has neither; the caller attaches position/team via a later merge with `players`.
+    """
     present_additive = [c for c in ADDITIVE_GW_STATS if c in gw_rows.columns]
     agg = {c: "sum" for c in present_additive}
-    agg.update({"name": "first", "position": "first", "team": "first"})
+    agg.update({c: "first" for c in ("name", "position", "team") if c in gw_rows.columns})
     agg.update({c: "last" for c in ("value", "selected") if c in gw_rows.columns})
     collapsed = gw_rows.groupby(["season", "element", "GW"], as_index=False).agg(agg)
-    collapsed["position"] = collapsed["position"].map(POSITION_ALIASES).fillna(collapsed["position"])
+    if "position" in collapsed.columns:
+        collapsed["position"] = collapsed["position"].map(POSITION_ALIASES).fillna(collapsed["position"])
     return collapsed
 
 

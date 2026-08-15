@@ -1,4 +1,4 @@
-"""Checks weekly_pipeline's orchestration: horizon scaling, the unwired-in-season guard, live-mode branching, and run logging."""
+"""Checks weekly_pipeline's orchestration: horizon scaling (cold-start and trained-model), live-mode branching, and run logging."""
 
 from __future__ import annotations
 
@@ -11,7 +11,10 @@ from fpl_agent.storage.db import get_connection, init_db
 
 PLAYERS = pd.DataFrame([{"player_id": 1, "web_name": "p1", "predicted_points": 4.0}])
 BOOTSTRAP_PRE_SEASON = {"events": [{"id": 1, "finished": False}]}
-BOOTSTRAP_MID_SEASON = {"events": [{"id": i, "finished": True} for i in range(1, 6)]}
+BOOTSTRAP_MID_SEASON = {
+    "events": [{"id": i, "finished": True} for i in range(1, 6)],
+    "teams": [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}],
+}
 
 RULES = SquadRules(
     budget_million=100.0, squad_size=4,
@@ -54,13 +57,65 @@ def test_predict_horizon_points_scales_cold_start_rate_by_horizon(monkeypatch):
     assert result["horizon_points"].iloc[0] == pytest.approx(20.0)
 
 
-def test_predict_horizon_points_guards_the_unwired_in_season_trained_model_path(monkeypatch, tmp_path):
-    """Once past the cold-start threshold with a trained model registered, this must fail loudly, not silently mispredict."""
-    registry_path = tmp_path / "registry.json"
-    registry_path.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(weekly_pipeline, "REGISTRY_PATH", registry_path)
-    with pytest.raises(NotImplementedError):
+def test_predict_horizon_points_sums_the_trained_model_across_the_horizon_and_zeroes_blank_gameweeks(monkeypatch, tmp_path):
+    """Past cold-start with a registered model, horizon_points must sum per-GW trained-model predictions, with blank GWs zeroed."""
+    (tmp_path / "registry.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(weekly_pipeline, "REGISTRY_PATH", tmp_path / "registry.json")
+    monkeypatch.setattr(weekly_pipeline, "PROCESSED_DIR", tmp_path)
+    pd.DataFrame(
+        {"event": [10, 11], "team_h": [1, 1], "team_a": [2, 2], "team_h_difficulty": [3, 3], "team_a_difficulty": [3, 3]}
+    ).to_parquet(tmp_path / "fixtures_current.parquet")
+    monkeypatch.setattr(weekly_pipeline.repository, "infer_current_gameweek", lambda bootstrap: 10)
+    monkeypatch.setattr(weekly_pipeline, "fetch_player_histories", lambda players: {})
+
+    def fake_predict_points(players, bootstrap, player_histories=None, fixtures_current=None, teams_current=None, target_gameweek=None):
+        if target_gameweek == 10:
+            return pd.DataFrame([{"player_id": 1, "predicted_points": 5.0, "fixture_count": 1}]), False
+        return pd.DataFrame([{"player_id": 1, "predicted_points": 3.0, "fixture_count": 0}]), False
+
+    monkeypatch.setattr(weekly_pipeline, "predict_points", fake_predict_points)
+
+    players = pd.DataFrame([{"player_id": 1, "web_name": "p1"}])
+    predictions, used_cold_start = weekly_pipeline.predict_horizon_points(players, BOOTSTRAP_MID_SEASON, horizon_gws=2)
+
+    assert used_cold_start is False
+    row = predictions.loc[predictions["player_id"] == 1].iloc[0]
+    assert row["horizon_points"] == pytest.approx(5.0)  # GW10's 5.0 + GW11's blank-zeroed 0.0, not 5.0 + 3.0
+    assert row["predicted_points"] == pytest.approx(2.5)  # horizon_points / horizon_gws
+
+
+def test_predict_horizon_points_raises_when_the_season_has_no_current_or_next_gameweek(monkeypatch, tmp_path):
+    """A missing current/next event (season over) must fail clearly rather than loop with gw=None."""
+    (tmp_path / "registry.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(weekly_pipeline, "REGISTRY_PATH", tmp_path / "registry.json")
+    monkeypatch.setattr(weekly_pipeline.repository, "infer_current_gameweek", lambda bootstrap: None)
+
+    with pytest.raises(ValueError):
         weekly_pipeline.predict_horizon_points(PLAYERS, BOOTSTRAP_MID_SEASON, horizon_gws=5)
+
+
+def test_fetch_player_histories_renames_round_to_gw(monkeypatch):
+    """The raw element-summary payload names the gameweek field 'round'; build_current_features expects 'GW'."""
+    monkeypatch.setattr(
+        weekly_pipeline.fpl_api, "get_element_summary",
+        lambda player_id: {"history": [{"round": 3, "total_points": 6}, {"round": 4, "total_points": 2}]},
+    )
+    players = pd.DataFrame([{"player_id": 1}])
+
+    histories = weekly_pipeline.fetch_player_histories(players)
+
+    assert list(histories[1]["GW"]) == [3, 4]
+    assert "round" not in histories[1].columns
+
+
+def test_fetch_player_histories_handles_a_player_with_no_history_yet(monkeypatch):
+    """A brand-new player with an empty history list must produce an empty frame, not raise."""
+    monkeypatch.setattr(weekly_pipeline.fpl_api, "get_element_summary", lambda player_id: {"history": []})
+    players = pd.DataFrame([{"player_id": 1}])
+
+    histories = weekly_pipeline.fetch_player_histories(players)
+
+    assert histories[1].empty
 
 
 def test_refresh_and_enrich_news_continues_when_rss_and_scrape_both_fail(monkeypatch):

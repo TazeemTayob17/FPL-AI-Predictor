@@ -44,3 +44,14 @@ def test_position_labels_are_normalized_across_vaastav_seasons():
     )
     result = collapse_to_gameweek(rows)
     assert set(result["position"]) == {"GKP", "MID"}
+
+
+def test_collapses_a_live_element_summary_shaped_frame_with_no_name_position_or_team_columns():
+    """A live element-summary pull has no name/position/team columns - only build_current_features's later merge adds them."""
+    rows = pd.DataFrame(
+        {"season": ["current", "current"], "element": [1, 1], "GW": [5, 5], "total_points": [4, 6], "minutes": [90, 90]}
+    )
+    result = collapse_to_gameweek(rows)
+    assert len(result) == 1
+    assert result.iloc[0]["total_points"] == 10
+    assert "position" not in result.columns

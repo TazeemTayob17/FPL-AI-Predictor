@@ -14,7 +14,7 @@ import pandas as pd
 import yaml
 
 from fpl_agent.features.rolling_stats import add_minutes_volatility
-from fpl_agent.ingestion import news_rss, news_scrape
+from fpl_agent.ingestion import fpl_api, news_rss, news_scrape
 from fpl_agent.models.evaluate import (
     HORIZON,
     MIN_SQUAD_FORMATION_GW,
@@ -95,29 +95,67 @@ def refresh_and_enrich_news() -> tuple[pd.DataFrame, dict]:
     return players, bootstrap
 
 
-def predict_horizon_points(players: pd.DataFrame, bootstrap: dict, horizon_gws: int) -> tuple[pd.DataFrame, bool]:
-    """Attaches `horizon_points`: the router's single-GW predicted_points held flat across the horizon.
+def fetch_player_histories(players: pd.DataFrame) -> dict[int, pd.DataFrame]:
+    """Fetches each current player's this-season match-by-match history - live input for the trained model's rolling features.
 
-    This matches the flat-rate assumption backtest_season.py's naive baseline uses. A true per-GW rolling horizon
-    (like models.evaluate.build_horizon_points computes for historical replay) needs live per-player match
-    histories via fpl_api.get_element_summary, which isn't wired into build_current_features yet - see the
-    NotImplementedError below, which fires loudly instead of silently mispredicting once that in-season branch
-    would otherwise be reached.
+    One element-summary call per player (a few hundred requests). Each call is cached as an immutable raw JSON
+    snapshot by fpl_api.get_element_summary, per the architecture's data/raw/ convention - be aware this adds up
+    fast under a multi-times-daily refresh cadence; pruning/retention isn't handled here.
+    """
+    histories = {}
+    for player_id in players["player_id"]:
+        summary = fpl_api.get_element_summary(int(player_id))
+        history = pd.DataFrame(summary.get("history", []))
+        if not history.empty:
+            history = history.rename(columns={"round": "GW"})
+        histories[int(player_id)] = history
+    return histories
+
+
+def predict_horizon_points(players: pd.DataFrame, bootstrap: dict, horizon_gws: int) -> tuple[pd.DataFrame, bool]:
+    """Attaches `horizon_points`, routing the same way predict_points does:
+
+    - Cold-start: its single-GW rate held flat across the horizon (matches backtest_season.py's naive baseline).
+    - Trained model: summed over the next `horizon_gws` gameweeks, rolling form held at its latest snapshot while
+      fixture context varies per GW - the live analog of models.evaluate.build_horizon_points's replay approach.
+      Blank-gameweek rows (fixture_count == 0) are zeroed per GW rather than left to the model to extrapolate on
+      missing fixture-context features, matching how the historical replay path already handles blanks.
     """
     with SETTINGS_PATH.open(encoding="utf-8") as f:
         threshold = int(yaml.safe_load(f)["model"]["cold_start_gw_threshold"])
     completed = completed_gameweeks_this_season(bootstrap)
-    if not should_use_cold_start(completed, threshold) and REGISTRY_PATH.exists():
-        raise NotImplementedError(
-            f"{completed} gameweeks completed this season (>= cold-start threshold {threshold}): the live "
-            "in-season trained-model path needs a player_histories builder (fpl_api.get_element_summary per "
-            "player, fed through build_current_features) that hasn't been wired up yet. Build that before "
-            "relying on live recommendations past this point."
+
+    if should_use_cold_start(completed, threshold) or not REGISTRY_PATH.exists():
+        predictions, used_cold_start = predict_points(players, bootstrap)
+        predictions = predictions.copy()
+        predictions["horizon_points"] = predictions["predicted_points"] * horizon_gws
+        return predictions, used_cold_start
+
+    next_gw = repository.infer_current_gameweek(bootstrap)
+    if next_gw is None:
+        raise ValueError("Cannot determine the current/next gameweek from bootstrap-static (is the season over?).")
+
+    fixtures_current = pd.read_parquet(PROCESSED_DIR / "fixtures_current.parquet")
+    teams_current = pd.DataFrame(bootstrap["teams"])
+    player_histories = fetch_player_histories(players)
+
+    horizon_frames = []
+    for gw in range(next_gw, next_gw + horizon_gws):
+        gw_predictions, _used_cold_start = predict_points(
+            players, bootstrap, player_histories=player_histories, fixtures_current=fixtures_current,
+            teams_current=teams_current, target_gameweek=gw,
         )
-    predictions, used_cold_start = predict_points(players, bootstrap)
-    predictions = predictions.copy()
-    predictions["horizon_points"] = predictions["predicted_points"] * horizon_gws
-    return predictions, used_cold_start
+        gw_predictions = gw_predictions.copy()
+        gw_predictions.loc[gw_predictions["fixture_count"] == 0, "predicted_points"] = 0.0
+        horizon_frames.append(gw_predictions[["player_id", "predicted_points"]])
+
+    horizon_sum = pd.concat(horizon_frames, ignore_index=True).groupby("player_id", as_index=False)["predicted_points"].sum()
+    horizon_sum = horizon_sum.rename(columns={"predicted_points": "horizon_points"})
+
+    predictions = players.merge(horizon_sum, on="player_id", how="left")
+    predictions["horizon_points"] = predictions["horizon_points"].fillna(0.0)
+    predictions["predicted_points"] = predictions["horizon_points"] / horizon_gws
+    return predictions, False
 
 
 def run_live(team_id: int | None = None) -> dict:

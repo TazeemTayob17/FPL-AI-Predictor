@@ -27,7 +27,7 @@ def save_bootstrap(bootstrap: dict) -> pd.DataFrame:
     players = _build_players_frame(bootstrap)
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     players.to_parquet(PROCESSED_DIR / "players_current.parquet", index=False)
-    gameweek = _infer_current_gameweek(bootstrap)
+    gameweek = infer_current_gameweek(bootstrap)
     _write_snapshots(players, gameweek)
     _write_player_status(players)
     return players
@@ -59,7 +59,7 @@ def _build_players_frame(bootstrap: dict) -> pd.DataFrame:
     return players[PLAYER_COLUMNS]
 
 
-def _infer_current_gameweek(bootstrap: dict) -> int | None:
+def infer_current_gameweek(bootstrap: dict) -> int | None:
     """Finds the current (or next, pre-season) gameweek number from bootstrap-static's events list."""
     events = bootstrap.get("events", [])
     for event in events:
