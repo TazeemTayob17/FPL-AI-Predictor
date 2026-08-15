@@ -35,7 +35,13 @@ chips:
   chips_per_gameweek_limit: 1
 
 model:
-  cold_start_gw_threshold: 4   # GWs of current-season data needed before switching off cold-start priors
+  # Backtested 2026-08-15 across 2023-24/2024-25/2025-26 (GW1-10, walk-forward): the trained model beat cold-start
+  # priors at every single gameweek tested, including GW1 itself (rank-corr ~0.6-0.76 vs ~0.33-0.42) - both for
+  # players with prior-season history and, once cold_start.py's promoted-club fallback was actually wired up
+  # (see models/cold_start.py's default_weak_team_prior), for debut/promoted-club players too. 0 means cold-start
+  # only fires as the registry-missing safety fallback, not on a GW-elapsed schedule. See IMPLEMENTATION_PLAN.md
+  # "Deviations" section for the full investigation and the one caveat (model freshness) worth knowing about.
+  cold_start_gw_threshold: 0   # GWs of current-season data needed before switching off cold-start priors
   near_term_horizon_gws: 5
   season_planner_refresh: "after_each_gameweek"
 

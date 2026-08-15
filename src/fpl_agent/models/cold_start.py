@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+from fpl_agent.features.fixtures_features import team_fixture_difficulty
 from fpl_agent.models.naive_predictor import previous_season_label
 from fpl_agent.storage.repository import PROCESSED_DIR
 
@@ -17,6 +18,7 @@ SHRINKAGE_MINUTES = 450.0
 TRANSFER_DISCOUNT = 0.85
 WEAK_TEAM_TIER_SIZE = 5
 DIFFICULTY_SWING_PER_STEP = 0.05
+OPENING_DIFFICULTY_WINDOW_GWS = 3
 
 
 def load_prior_season_player_stats(season_label: str) -> pd.DataFrame:
@@ -83,6 +85,39 @@ def weak_team_prior_points_per_gw(
     return per_gw.groupby(weak_players["position"]).mean().rename("weak_team_prior_pp_gw").reset_index()
 
 
+def default_weak_team_prior(season_label: str, current_positions: pd.DataFrame, prior_stats: pd.DataFrame) -> pd.DataFrame:
+    """Loads the previous season's completed fixtures/teams and computes the weak-team-tier prior for players with no prior_stats match.
+
+    Returns an empty frame (matching predict_cold_start_points's old always-empty default) if that historical data
+    isn't available yet - e.g. before vaastav_sync has ever run.
+    """
+    empty = pd.DataFrame(columns=["position", "weak_team_prior_pp_gw"])
+    if prior_stats.empty:
+        return empty
+    fixtures_path = PROCESSED_DIR / "all_seasons_fixtures.parquet"
+    teams_path = PROCESSED_DIR / "all_seasons_teams.parquet"
+    if not fixtures_path.exists() or not teams_path.exists():
+        return empty
+
+    prev_season = previous_season_label(season_label)
+    prev_fixtures = pd.read_parquet(fixtures_path).pipe(lambda f: f[f["season"] == prev_season])
+    prev_teams = pd.read_parquet(teams_path).pipe(lambda t: t[t["season"] == prev_season])
+    if prev_fixtures.empty or prev_teams.empty:
+        return empty
+    return weak_team_prior_points_per_gw(prior_stats, prev_fixtures, prev_teams, current_positions)
+
+
+def build_opening_difficulty(
+    fixtures_current: pd.DataFrame, teams_current: pd.DataFrame, window_gws: int = OPENING_DIFFICULTY_WINDOW_GWS
+) -> pd.DataFrame:
+    """Averages each team's fixture-difficulty rating across their first `window_gws` gameweeks of the new season."""
+    difficulty = team_fixture_difficulty(fixtures_current, teams_current)
+    opening = difficulty[difficulty["event"] <= window_gws]
+    if opening.empty:
+        return pd.DataFrame(columns=["team_id", "difficulty"])
+    return opening.groupby("team", as_index=False)["difficulty"].mean().rename(columns={"team": "team_id"})
+
+
 def predict_cold_start_points(
     players: pd.DataFrame,
     season_label: str | None = None,
@@ -96,14 +131,16 @@ def predict_cold_start_points(
             season_label = yaml.safe_load(f)["season"]["label"]
     if prior_stats is None:
         prior_stats = load_prior_season_player_stats(season_label)
-    if weak_team_prior is None:
-        weak_team_prior = pd.DataFrame(columns=["position", "weak_team_prior_pp_gw"])
     if opening_difficulty is None:
         opening_difficulty = pd.DataFrame(columns=["team_id", "difficulty"])
 
     current_positions = players[["web_name_full", "position"]].rename(
         columns={"web_name_full": "player_name"}
     ).assign(player_name=lambda d: d["player_name"].str.strip().str.lower())
+
+    if weak_team_prior is None:
+        weak_team_prior = default_weak_team_prior(season_label, current_positions, prior_stats)
+
     pos_avg = (
         position_average_pp90(prior_stats, current_positions) if not prior_stats.empty
         else pd.DataFrame(columns=["position", "position_avg_pp90"])

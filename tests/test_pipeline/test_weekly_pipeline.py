@@ -49,9 +49,17 @@ def _no_op_run_logging(monkeypatch):
     monkeypatch.setattr(weekly_pipeline, "_finish_run", lambda *a, **k: None)
 
 
-def test_predict_horizon_points_scales_cold_start_rate_by_horizon(monkeypatch):
-    """Cold-start's flat per-GW rate should be multiplied by the horizon, not left as a single-GW number."""
-    monkeypatch.setattr(weekly_pipeline, "predict_points", lambda players, bootstrap: (PLAYERS.copy(), True))
+def test_predict_horizon_points_scales_cold_start_rate_by_horizon(monkeypatch, tmp_path):
+    """Cold-start's flat per-GW rate should be multiplied by the horizon, not left as a single-GW number.
+
+    cold_start_gw_threshold is 0 in real settings.yaml (backtested: the trained model wins at every GW tested,
+    including GW1), so the only live route into cold-start now is the missing-registry fallback - mock that here.
+    """
+    monkeypatch.setattr(weekly_pipeline, "REGISTRY_PATH", tmp_path / "no_registry_here.json")
+    monkeypatch.setattr(
+        weekly_pipeline, "predict_points",
+        lambda players, bootstrap, fixtures_current=None, teams_current=None: (PLAYERS.copy(), True),
+    )
     result, used_cold_start = weekly_pipeline.predict_horizon_points(PLAYERS, BOOTSTRAP_PRE_SEASON, horizon_gws=5)
     assert used_cold_start is True
     assert result["horizon_points"].iloc[0] == pytest.approx(20.0)

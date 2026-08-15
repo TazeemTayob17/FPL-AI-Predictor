@@ -21,7 +21,10 @@ def build_initial_squad() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
             f"{players_path} or the cached bootstrap payload not found - run `python -m fpl_agent.pipeline.refresh_data` first."
         )
     players = pd.read_parquet(players_path)
-    players, _used_cold_start = predict_points(players, bootstrap)
+    fixtures_path = PROCESSED_DIR / "fixtures_current.parquet"
+    fixtures_current = pd.read_parquet(fixtures_path) if fixtures_path.exists() else None
+    teams_current = pd.DataFrame(bootstrap["teams"]) if "teams" in bootstrap else None
+    players, _used_cold_start = predict_points(players, bootstrap, fixtures_current=fixtures_current, teams_current=teams_current)
     squad = select_squad(players)
     starting_xi, bench = select_starting_xi(squad)
     return squad, starting_xi, bench

@@ -112,10 +112,19 @@ def fetch_player_histories(players: pd.DataFrame) -> dict[int, pd.DataFrame]:
     return histories
 
 
+def _load_fixtures_and_teams_current(bootstrap: dict) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
+    """Loads the current season's fixtures/teams if available, for opening-fixture-difficulty or live rolling context."""
+    fixtures_path = PROCESSED_DIR / "fixtures_current.parquet"
+    fixtures_current = pd.read_parquet(fixtures_path) if fixtures_path.exists() else None
+    teams_current = pd.DataFrame(bootstrap["teams"]) if "teams" in bootstrap else None
+    return fixtures_current, teams_current
+
+
 def predict_horizon_points(players: pd.DataFrame, bootstrap: dict, horizon_gws: int) -> tuple[pd.DataFrame, bool]:
     """Attaches `horizon_points`, routing the same way predict_points does:
 
     - Cold-start: its single-GW rate held flat across the horizon (matches backtest_season.py's naive baseline).
+      The current season's fixtures/teams (when available) feed the opening-fixture-difficulty adjustment too.
     - Trained model: summed over the next `horizon_gws` gameweeks, rolling form held at its latest snapshot while
       fixture context varies per GW - the live analog of models.evaluate.build_horizon_points's replay approach.
       Blank-gameweek rows (fixture_count == 0) are zeroed per GW rather than left to the model to extrapolate on
@@ -126,7 +135,10 @@ def predict_horizon_points(players: pd.DataFrame, bootstrap: dict, horizon_gws: 
     completed = completed_gameweeks_this_season(bootstrap)
 
     if should_use_cold_start(completed, threshold) or not REGISTRY_PATH.exists():
-        predictions, used_cold_start = predict_points(players, bootstrap)
+        fixtures_current, teams_current = _load_fixtures_and_teams_current(bootstrap)
+        predictions, used_cold_start = predict_points(
+            players, bootstrap, fixtures_current=fixtures_current, teams_current=teams_current
+        )
         predictions = predictions.copy()
         predictions["horizon_points"] = predictions["predicted_points"] * horizon_gws
         return predictions, used_cold_start
@@ -135,8 +147,11 @@ def predict_horizon_points(players: pd.DataFrame, bootstrap: dict, horizon_gws: 
     if next_gw is None:
         raise ValueError("Cannot determine the current/next gameweek from bootstrap-static (is the season over?).")
 
-    fixtures_current = pd.read_parquet(PROCESSED_DIR / "fixtures_current.parquet")
-    teams_current = pd.DataFrame(bootstrap["teams"])
+    fixtures_current, teams_current = _load_fixtures_and_teams_current(bootstrap)
+    if fixtures_current is None or teams_current is None:
+        raise ValueError(
+            "The trained-model path needs fixtures_current.parquet and bootstrap['teams'] - run the refresh first."
+        )
     player_histories = fetch_player_histories(players)
 
     horizon_frames = []

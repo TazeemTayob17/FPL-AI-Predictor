@@ -10,7 +10,7 @@ import pandas as pd
 import yaml
 
 from fpl_agent.features.build_features import build_current_features
-from fpl_agent.models.cold_start import predict_cold_start_points
+from fpl_agent.models.cold_start import build_opening_difficulty, predict_cold_start_points
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SETTINGS_PATH = PROJECT_ROOT / "config" / "settings.yaml"
@@ -63,7 +63,10 @@ def predict_points(
     completed = completed_gameweeks_this_season(bootstrap)
 
     if should_use_cold_start(completed, threshold) or not registry_path.exists():
-        return predict_cold_start_points(players), True
+        opening_difficulty = None
+        if fixtures_current is not None and teams_current is not None:
+            opening_difficulty = build_opening_difficulty(fixtures_current, teams_current)
+        return predict_cold_start_points(players, opening_difficulty=opening_difficulty), True
 
     if player_histories is None or fixtures_current is None or teams_current is None or target_gameweek is None:
         raise ValueError("player_histories, fixtures_current, teams_current, and target_gameweek are required past cold-start.")
