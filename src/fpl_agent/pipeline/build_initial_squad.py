@@ -1,10 +1,11 @@
-"""Entrypoint: runs the naive predictor + squad optimizer + captaincy against real local player data."""
+"""Entrypoint: runs the real predictor (cold-start prior or trained model) + squad optimizer + captaincy against local player data."""
 
 from __future__ import annotations
 
 import pandas as pd
 
-from fpl_agent.models.naive_predictor import predict_naive_points
+from fpl_agent.ingestion.cache import load_latest_json
+from fpl_agent.models.predict import predict_points
 from fpl_agent.optimizer.captaincy import choose_captaincy
 from fpl_agent.optimizer.constraints import load_rules
 from fpl_agent.optimizer.squad_optimizer import select_squad, select_starting_xi
@@ -14,12 +15,13 @@ from fpl_agent.storage.repository import PROCESSED_DIR
 def build_initial_squad() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Loads current players from local storage and returns (squad, starting_xi, bench)."""
     players_path = PROCESSED_DIR / "players_current.parquet"
-    if not players_path.exists():
+    bootstrap = load_latest_json("bootstrap")
+    if not players_path.exists() or bootstrap is None:
         raise FileNotFoundError(
-            f"{players_path} not found - run `python -m fpl_agent.pipeline.refresh_data` first."
+            f"{players_path} or the cached bootstrap payload not found - run `python -m fpl_agent.pipeline.refresh_data` first."
         )
     players = pd.read_parquet(players_path)
-    players = predict_naive_points(players)
+    players, _used_cold_start = predict_points(players, bootstrap)
     squad = select_squad(players)
     starting_xi, bench = select_starting_xi(squad)
     return squad, starting_xi, bench
