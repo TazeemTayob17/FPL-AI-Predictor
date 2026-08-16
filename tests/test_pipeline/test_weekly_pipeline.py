@@ -72,14 +72,17 @@ def test_refresh_and_enrich_news_continues_when_rss_and_scrape_both_fail(monkeyp
 def test_run_live_returns_initial_squad_recommendation_when_no_live_squad_yet(monkeypatch):
     _no_op_run_logging(monkeypatch)
     squad = pd.DataFrame([{"web_name": "p1"}])
+    all_players = pd.DataFrame([{"web_name": "p1"}, {"web_name": "p2"}])
     monkeypatch.setattr(weekly_pipeline, "refresh_and_enrich_news", lambda: (PLAYERS, BOOTSTRAP_PRE_SEASON))
     monkeypatch.setattr(weekly_pipeline, "get_team_id", lambda: 123)
     monkeypatch.setattr(weekly_pipeline, "sync_team", lambda team_id: None)
-    monkeypatch.setattr(weekly_pipeline, "build_initial_squad", lambda: (squad, squad, squad))
+    monkeypatch.setattr(weekly_pipeline, "build_initial_squad", lambda: (squad, squad, squad, all_players, True))
 
     result = weekly_pipeline.run_live()
     assert result["mode"] == "initial_squad"
     assert result["squad"] is squad
+    assert result["all_players"] is all_players
+    assert result["used_cold_start"] is True
 
 
 # With a live squad synced, run_live must wire real predictions through the real optimizer/captaincy logic.

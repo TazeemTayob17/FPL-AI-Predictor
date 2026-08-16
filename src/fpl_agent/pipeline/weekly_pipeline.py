@@ -136,9 +136,12 @@ def run_live(team_id: int | None = None) -> dict:
         snapshot = sync_team(resolved_team_id)
 
         if snapshot is None:
-            squad, starting_xi, bench = build_initial_squad()
+            squad, starting_xi, bench, all_players, used_cold_start = build_initial_squad()
             _finish_run(run_id, "success", "pre-deadline: no live squad yet, returned initial squad recommendation")
-            return {"mode": "initial_squad", "squad": squad, "starting_xi": starting_xi, "bench": bench}
+            return {
+                "mode": "initial_squad", "squad": squad, "starting_xi": starting_xi, "bench": bench,
+                "all_players": all_players, "used_cold_start": used_cold_start,
+            }
 
         predictions, used_cold_start = predict_horizon_points(players, bootstrap, horizon_gws)
         picks_ids = {pick["player_id"] for pick in snapshot["picks"]}
@@ -172,6 +175,7 @@ def run_live(team_id: int | None = None) -> dict:
             "vice_captain": vice_captain,
             "season_plan": season_plan,
             "chip_suggestions": chip_suggestions,
+            "all_players": predictions,
         }
         _finish_run(run_id, "success", f"GW{snapshot['gameweek']} live recommendation generated")
         return result

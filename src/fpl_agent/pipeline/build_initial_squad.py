@@ -14,8 +14,8 @@ from fpl_agent.storage.repository import PROCESSED_DIR
 INITIAL_SQUAD_HORIZON_GWS = 1  # a single-GW-equivalent estimate, matching this entrypoint's original semantics
 
 
-# Loads current players from local storage and returns (squad, starting_xi, bench).
-def build_initial_squad() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+# Loads current players from local storage and returns (squad, starting_xi, bench, all_players, used_cold_start).
+def build_initial_squad() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]:
     players_path = PROCESSED_DIR / "players_current.parquet"
     bootstrap = load_latest_json("bootstrap")
     if not players_path.exists() or bootstrap is None:
@@ -23,10 +23,10 @@ def build_initial_squad() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
             f"{players_path} or the cached bootstrap payload not found - run `python -m fpl_agent.pipeline.refresh_data` first."
         )
     players = pd.read_parquet(players_path)
-    players, _used_cold_start = predict_horizon_points(players, bootstrap, horizon_gws=INITIAL_SQUAD_HORIZON_GWS)
-    squad = select_squad(players)
+    all_players, used_cold_start = predict_horizon_points(players, bootstrap, horizon_gws=INITIAL_SQUAD_HORIZON_GWS)
+    squad = select_squad(all_players)
     starting_xi, bench = select_starting_xi(squad)
-    return squad, starting_xi, bench
+    return squad, starting_xi, bench, all_players, used_cold_start
 
 
 # Prints the squad, starting XI, bench, and captaincy choice in a human-readable form.
@@ -49,4 +49,5 @@ def print_squad_report(squad: pd.DataFrame, starting_xi: pd.DataFrame, bench: pd
 
 
 if __name__ == "__main__":
-    print_squad_report(*build_initial_squad())
+    squad, starting_xi, bench, _all_players, _used_cold_start = build_initial_squad()
+    print_squad_report(squad, starting_xi, bench)

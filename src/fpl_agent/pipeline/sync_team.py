@@ -1,4 +1,4 @@
-"""Entrypoint: syncs the manager's real FPL squad once it's live, falling back to a GW1 recommendation before then."""
+# Entrypoint: syncs the manager's real FPL squad once it's live, falling back to a GW1 recommendation before then.
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from fpl_agent.storage import repository
 from fpl_agent.utils.env import get_team_id
 
 
+# Pulls entry/history/picks for the manager and saves a team_snapshot; returns None if picks aren't live yet.
 def sync_team(team_id: int) -> dict | None:
-    """Pulls entry/history/picks for the manager and saves a team_snapshot; returns None if picks aren't live yet."""
     entry = fpl_api.get_entry(team_id)
     history = fpl_api.get_entry_history(team_id)
 
@@ -30,8 +30,8 @@ def sync_team(team_id: int) -> dict | None:
     return repository.save_team_snapshot(entry, history, picks, load_rules())
 
 
+# Picks the gameweek to fetch picks for: the manager's own current_event, or their last-played gameweek.
 def _determine_target_gameweek(entry: dict, history: dict) -> int | None:
-    """Picks the gameweek to fetch picks for: the manager's own current_event, or their last-played gameweek."""
     if entry.get("current_event"):
         return entry["current_event"]
     current_history = history.get("current", [])
@@ -43,7 +43,8 @@ if __name__ == "__main__":
     if snapshot is None:
         print("Your live squad isn't available yet (the first gameweek deadline hasn't passed).")
         print("Here's a recommended squad to enter yourself before the deadline:\n")
-        print_squad_report(*build_initial_squad())
+        squad, starting_xi, bench, _all_players, _used_cold_start = build_initial_squad()
+        print_squad_report(squad, starting_xi, bench)
     else:
         print(f"Synced GW{snapshot['gameweek']} squad from the live API.")
         print(
