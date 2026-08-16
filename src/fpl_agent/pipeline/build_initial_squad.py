@@ -1,19 +1,21 @@
-"""Entrypoint: runs the real predictor (cold-start prior or trained model) + squad optimizer + captaincy against local player data."""
+# Entrypoint: runs the real predictor (cold-start prior or trained model) + squad optimizer + captaincy against local player data.
 
 from __future__ import annotations
 
 import pandas as pd
 
 from fpl_agent.ingestion.cache import load_latest_json
-from fpl_agent.models.predict import predict_points
+from fpl_agent.models.predict import predict_horizon_points
 from fpl_agent.optimizer.captaincy import choose_captaincy
 from fpl_agent.optimizer.constraints import load_rules
 from fpl_agent.optimizer.squad_optimizer import select_squad, select_starting_xi
 from fpl_agent.storage.repository import PROCESSED_DIR
 
+INITIAL_SQUAD_HORIZON_GWS = 1  # a single-GW-equivalent estimate, matching this entrypoint's original semantics
 
+
+# Loads current players from local storage and returns (squad, starting_xi, bench).
 def build_initial_squad() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Loads current players from local storage and returns (squad, starting_xi, bench)."""
     players_path = PROCESSED_DIR / "players_current.parquet"
     bootstrap = load_latest_json("bootstrap")
     if not players_path.exists() or bootstrap is None:
@@ -21,17 +23,14 @@ def build_initial_squad() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
             f"{players_path} or the cached bootstrap payload not found - run `python -m fpl_agent.pipeline.refresh_data` first."
         )
     players = pd.read_parquet(players_path)
-    fixtures_path = PROCESSED_DIR / "fixtures_current.parquet"
-    fixtures_current = pd.read_parquet(fixtures_path) if fixtures_path.exists() else None
-    teams_current = pd.DataFrame(bootstrap["teams"]) if "teams" in bootstrap else None
-    players, _used_cold_start = predict_points(players, bootstrap, fixtures_current=fixtures_current, teams_current=teams_current)
+    players, _used_cold_start = predict_horizon_points(players, bootstrap, horizon_gws=INITIAL_SQUAD_HORIZON_GWS)
     squad = select_squad(players)
     starting_xi, bench = select_starting_xi(squad)
     return squad, starting_xi, bench
 
 
+# Prints the squad, starting XI, bench, and captaincy choice in a human-readable form.
 def print_squad_report(squad: pd.DataFrame, starting_xi: pd.DataFrame, bench: pd.DataFrame) -> None:
-    """Prints the squad, starting XI, bench, and captaincy choice in a human-readable form."""
     rules = load_rules()
     columns = ["web_name", "team_short", "position", "now_cost_million", "predicted_points"]
 

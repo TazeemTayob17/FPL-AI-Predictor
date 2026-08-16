@@ -1,9 +1,4 @@
-"""Single entrypoint wiring refresh -> news enrichment -> predict -> optimize -> cache, for live runs and historical replay.
-
-Consolidates what was previously split across refresh_data.py, build_initial_squad.py, sync_team.py, and
-scripts/replay_gameweek.py, so later phases (season_planner, the dashboard) have one real integration point
-instead of several scripts glued together ad hoc.
-"""
+# Single entrypoint wiring refresh -> news enrichment -> predict -> optimize -> cache, for live runs and replay.
 
 from __future__ import annotations
 
@@ -13,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+from fpl_agent.features.build_features import team_gameweek_context
 from fpl_agent.features.rolling_stats import add_minutes_volatility
 from fpl_agent.ingestion import fpl_api, news_rss, news_scrape
 from fpl_agent.models.evaluate import (
@@ -23,14 +19,9 @@ from fpl_agent.models.evaluate import (
     target_season_player_pool,
     train_as_of,
 )
-from fpl_agent.models.predict import (
-    REGISTRY_PATH,
-    SETTINGS_PATH,
-    completed_gameweeks_this_season,
-    predict_points,
-    should_use_cold_start,
-)
+from fpl_agent.models.predict import SETTINGS_PATH, load_fixtures_and_teams_current, predict_horizon_points
 from fpl_agent.models.train import feature_columns
+from fpl_agent.optimizer import chip_strategy, season_planner
 from fpl_agent.optimizer.captaincy import captaincy_candidates, choose_captaincy
 from fpl_agent.optimizer.constraints import load_rules
 from fpl_agent.optimizer.squad_optimizer import select_squad, select_starting_xi
@@ -41,13 +32,17 @@ from fpl_agent.pipeline.sync_team import sync_team
 from fpl_agent.storage import repository
 from fpl_agent.storage.db import DEFAULT_DB_PATH, get_connection
 from fpl_agent.storage.repository import PROCESSED_DIR
+from fpl_agent.utils.dates import load_chip_config
 from fpl_agent.utils.env import get_team_id
+
+SEASON_PLAN_LOOKAHEAD_GWS = 15
+LAST_GAMEWEEK_OF_SEASON = 38
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
+# Inserts a "running" row into run_history and returns its id, so the dashboard can show run status/history later.
 def _start_run(run_type: str, db_path: Path = DEFAULT_DB_PATH) -> int:
-    """Inserts a 'running' row into run_history and returns its id, so the dashboard can show run status/history later."""
     conn = get_connection(db_path)
     try:
         cursor = conn.execute("INSERT INTO run_history (run_type, status) VALUES (?, 'running')", (run_type,))
@@ -57,8 +52,8 @@ def _start_run(run_type: str, db_path: Path = DEFAULT_DB_PATH) -> int:
         conn.close()
 
 
+# Marks a run_history row finished with its outcome.
 def _finish_run(run_id: int, status: str, details: str = "", db_path: Path = DEFAULT_DB_PATH) -> None:
-    """Marks a run_history row finished with its outcome."""
     conn = get_connection(db_path)
     try:
         conn.execute(
@@ -70,14 +65,14 @@ def _finish_run(run_id: int, status: str, details: str = "", db_path: Path = DEF
         conn.close()
 
 
+# Reads the configured near-term prediction horizon (in gameweeks) from settings.yaml.
 def _load_horizon_gws() -> int:
-    """Reads the configured near-term prediction horizon (in gameweeks) from settings.yaml."""
     with SETTINGS_PATH.open(encoding="utf-8") as f:
         return int(yaml.safe_load(f)["model"]["near_term_horizon_gws"])
 
 
+# Pulls the latest player/fixture data, then layers RSS and scrape news on top; news failures don't abort the run.
 def refresh_and_enrich_news() -> tuple[pd.DataFrame, dict]:
-    """Pulls the latest player/fixture data, then layers RSS and scrape news on top; news failures don't abort the run."""
     players, bootstrap = refresh_data.run_refresh()
     try:
         rss_rows = news_rss.build_news_items(players)
@@ -95,86 +90,43 @@ def refresh_and_enrich_news() -> tuple[pd.DataFrame, dict]:
     return players, bootstrap
 
 
-def fetch_player_histories(players: pd.DataFrame) -> dict[int, pd.DataFrame]:
-    """Fetches each current player's this-season match-by-match history - live input for the trained model's rolling features.
-
-    One element-summary call per player (a few hundred requests). Each call is cached as an immutable raw JSON
-    snapshot by fpl_api.get_element_summary, per the architecture's data/raw/ convention - be aware this adds up
-    fast under a multi-times-daily refresh cadence; pruning/retention isn't handled here.
-    """
-    histories = {}
-    for player_id in players["player_id"]:
-        summary = fpl_api.get_element_summary(int(player_id))
-        history = pd.DataFrame(summary.get("history", []))
-        if not history.empty:
-            history = history.rename(columns={"round": "GW"})
-        histories[int(player_id)] = history
-    return histories
+# Fetches standings for the first configured mini_league_id, or (None, None) if none are configured.
+def _load_mini_league_standings(settings_path: Path = SETTINGS_PATH) -> tuple[pd.DataFrame | None, int | None]:
+    with settings_path.open(encoding="utf-8") as f:
+        league_ids = yaml.safe_load(f)["team"].get("mini_league_ids") or []
+    if not league_ids:
+        return None, None
+    league_id = int(league_ids[0])
+    try:
+        raw = fpl_api.get_league_standings(league_id)
+    except Exception as exc:
+        print(f"Mini-league standings fetch failed ({exc}); continuing without rank-aware risk posture.", file=sys.stderr)
+        return None, None
+    return repository.normalize_league_standings(raw, league_id), league_id
 
 
-def _load_fixtures_and_teams_current(bootstrap: dict) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
-    """Loads the current season's fixtures/teams if available, for opening-fixture-difficulty or live rolling context."""
-    fixtures_path = PROCESSED_DIR / "fixtures_current.parquet"
-    fixtures_current = pd.read_parquet(fixtures_path) if fixtures_path.exists() else None
-    teams_current = pd.DataFrame(bootstrap["teams"]) if "teams" in bootstrap else None
-    return fixtures_current, teams_current
+# Builds the season plan and, from it, a rule-aware chip suggestion report - shared by run_live and run_replay.
+def _build_season_plan_and_chip_suggestions(
+    squad: pd.DataFrame, fixtures: pd.DataFrame, teams: pd.DataFrame, current_gw: int, team_id: int | None,
+    chips_used: list[dict],
+) -> tuple[season_planner.SeasonPlan, dict]:
+    gw_range = range(current_gw, min(current_gw + SEASON_PLAN_LOOKAHEAD_GWS, LAST_GAMEWEEK_OF_SEASON + 1))
+    context = team_gameweek_context(fixtures, teams)
+    standings, _league_id = (_load_mini_league_standings() if team_id is not None else (None, None))
+
+    plan = season_planner.build_season_plan(
+        squad, context, context, gw_range, standings=standings, team_id=team_id,
+        gws_remaining_in_season=LAST_GAMEWEEK_OF_SEASON + 1 - current_gw,
+    )
+    chip_config = load_chip_config()
+    suggestions = chip_strategy.build_chip_suggestions(
+        gw_range, plan.chip_window_scores, plan.wildcard_signal, chips_used, current_gw, chip_config["first_half_deadline_gw"]
+    )
+    return plan, suggestions
 
 
-def predict_horizon_points(players: pd.DataFrame, bootstrap: dict, horizon_gws: int) -> tuple[pd.DataFrame, bool]:
-    """Attaches `horizon_points`, routing the same way predict_points does:
-
-    - Cold-start: its single-GW rate held flat across the horizon (matches backtest_season.py's naive baseline).
-      The current season's fixtures/teams (when available) feed the opening-fixture-difficulty adjustment too.
-    - Trained model: summed over the next `horizon_gws` gameweeks, rolling form held at its latest snapshot while
-      fixture context varies per GW - the live analog of models.evaluate.build_horizon_points's replay approach.
-      Blank-gameweek rows (fixture_count == 0) are zeroed per GW rather than left to the model to extrapolate on
-      missing fixture-context features, matching how the historical replay path already handles blanks.
-    """
-    with SETTINGS_PATH.open(encoding="utf-8") as f:
-        threshold = int(yaml.safe_load(f)["model"]["cold_start_gw_threshold"])
-    completed = completed_gameweeks_this_season(bootstrap)
-
-    if should_use_cold_start(completed, threshold) or not REGISTRY_PATH.exists():
-        fixtures_current, teams_current = _load_fixtures_and_teams_current(bootstrap)
-        predictions, used_cold_start = predict_points(
-            players, bootstrap, fixtures_current=fixtures_current, teams_current=teams_current
-        )
-        predictions = predictions.copy()
-        predictions["horizon_points"] = predictions["predicted_points"] * horizon_gws
-        return predictions, used_cold_start
-
-    next_gw = repository.infer_current_gameweek(bootstrap)
-    if next_gw is None:
-        raise ValueError("Cannot determine the current/next gameweek from bootstrap-static (is the season over?).")
-
-    fixtures_current, teams_current = _load_fixtures_and_teams_current(bootstrap)
-    if fixtures_current is None or teams_current is None:
-        raise ValueError(
-            "The trained-model path needs fixtures_current.parquet and bootstrap['teams'] - run the refresh first."
-        )
-    player_histories = fetch_player_histories(players)
-
-    horizon_frames = []
-    for gw in range(next_gw, next_gw + horizon_gws):
-        gw_predictions, _used_cold_start = predict_points(
-            players, bootstrap, player_histories=player_histories, fixtures_current=fixtures_current,
-            teams_current=teams_current, target_gameweek=gw,
-        )
-        gw_predictions = gw_predictions.copy()
-        gw_predictions.loc[gw_predictions["fixture_count"] == 0, "predicted_points"] = 0.0
-        horizon_frames.append(gw_predictions[["player_id", "predicted_points"]])
-
-    horizon_sum = pd.concat(horizon_frames, ignore_index=True).groupby("player_id", as_index=False)["predicted_points"].sum()
-    horizon_sum = horizon_sum.rename(columns={"predicted_points": "horizon_points"})
-
-    predictions = players.merge(horizon_sum, on="player_id", how="left")
-    predictions["horizon_points"] = predictions["horizon_points"].fillna(0.0)
-    predictions["predicted_points"] = predictions["horizon_points"] / horizon_gws
-    return predictions, False
-
-
+# Runs the full live pipeline: refresh, news enrichment, team sync, and either an initial-squad or transfer/captaincy recommendation.
 def run_live(team_id: int | None = None) -> dict:
-    """Runs the full live pipeline: refresh, news enrichment, team sync, and either an initial-squad or transfer/captaincy recommendation."""
     run_id = _start_run("weekly_pipeline_live")
     try:
         rules = load_rules()
@@ -192,8 +144,14 @@ def run_live(team_id: int | None = None) -> dict:
         picks_ids = {pick["player_id"] for pick in snapshot["picks"]}
         current_squad = predictions[predictions["player_id"].isin(picks_ids)].reset_index(drop=True)
 
+        fixtures_current, teams_current = load_fixtures_and_teams_current(bootstrap)
+        season_plan, chip_suggestions = _build_season_plan_and_chip_suggestions(
+            current_squad, fixtures_current, teams_current, snapshot["gameweek"], resolved_team_id, snapshot["chips_used"]
+        )
+
         recommendation = recommend_transfers(
-            current_squad, predictions, snapshot["bank"], snapshot["free_transfers"], rules
+            current_squad, predictions, snapshot["bank"], snapshot["free_transfers"], rules,
+            core_player_ids=season_plan.core_player_ids,
         )
         kept = current_squad[~current_squad["player_id"].isin(recommendation["dropped"]["player_id"])]
         resulting_squad = pd.concat([kept, recommendation["bought"]], ignore_index=True)
@@ -212,6 +170,8 @@ def run_live(team_id: int | None = None) -> dict:
             "bench": bench,
             "captain": captain,
             "vice_captain": vice_captain,
+            "season_plan": season_plan,
+            "chip_suggestions": chip_suggestions,
         }
         _finish_run(run_id, "success", f"GW{snapshot['gameweek']} live recommendation generated")
         return result
@@ -220,8 +180,8 @@ def run_live(team_id: int | None = None) -> dict:
         raise
 
 
+# Prints a human-readable live recommendation report.
 def print_live_report(result: dict) -> None:
-    """Prints a human-readable live recommendation report."""
     if result["mode"] == "initial_squad":
         print("Your live squad isn't available yet (the first gameweek deadline hasn't passed).")
         print("Here's a recommended squad to enter yourself before the deadline:\n")
@@ -239,10 +199,28 @@ def print_live_report(result: dict) -> None:
     print(f"\nCaptain: {result['captain']['web_name']} ({result['captain']['predicted_points']:.1f} pts)")
     print(f"Vice-captain: {result['vice_captain']['web_name']} ({result['vice_captain']['predicted_points']:.1f} pts)")
 
+    print_season_plan_and_chip_suggestions(result["season_plan"], result["chip_suggestions"])
 
+
+# Prints the season plan's risk posture and the upcoming chip suggestions - shared by live and replay reports.
+def print_season_plan_and_chip_suggestions(plan, chip_report: dict) -> None:
+    print(f"\nMini-league posture: {plan.risk_posture['posture']} - {plan.risk_posture['reasoning']}")
+    if plan.wildcard_signal.get("suggest_wildcard"):
+        print(f"Wildcard signal: fixtures notably worse than average (gap {plan.wildcard_signal['gap']:.2f}).")
+
+    upcoming = [s for s in chip_report["suggestions"] if s["chip"]]
+    if upcoming:
+        print("Chip suggestions:")
+        for s in upcoming:
+            print(f"  GW{s['GW']}: {s['chip_label']} - {s['reasoning']}")
+    else:
+        print("Chip suggestions: none of the scanned gameweeks meet the suggestion threshold.")
+    if chip_report.get("urgency_warning"):
+        print(f"  ! {chip_report['urgency_warning']}")
+
+
+# Replays a past gameweek: recommends a transfer and captain as of as_of_gw, against what actually happened.
 def run_replay(target_season: str, as_of_gw: int, horizon: int = HORIZON) -> dict:
-    """Replays a past gameweek: holds a squad formed from early-season predictions, then recommends a transfer and
-    captain as of as_of_gw, alongside what actually happened - a human-checkable sanity test of the whole chain."""
     run_id = _start_run("weekly_pipeline_replay")
     try:
         rules = load_rules()
@@ -264,15 +242,22 @@ def run_replay(target_season: str, as_of_gw: int, horizon: int = HORIZON) -> dic
 
         squad_h = squad.merge(horizon_points[["web_name", "horizon_points"]], on="web_name", how="left")
         squad_h["horizon_points"] = squad_h["horizon_points"].fillna(0)
+        squad_h["predicted_points"] = squad_h["horizon_points"] / horizon
         pool_h = pool.merge(horizon_points[["web_name", "horizon_points"]], on="web_name", how="left")
         pool_h["horizon_points"] = pool_h["horizon_points"].fillna(0)
 
+        fixtures = pd.read_parquet(PROCESSED_DIR / "all_seasons_fixtures.parquet")
+        teams = pd.read_parquet(PROCESSED_DIR / "all_seasons_teams.parquet")
+        season_plan, chip_suggestions = _build_season_plan_and_chip_suggestions(
+            squad_h, fixtures[fixtures["season"] == target_season], teams[teams["season"] == target_season],
+            as_of_gw, team_id=None, chips_used=[],
+        )
+
         bank = rules.budget_million - squad["now_cost_million"].sum()
         free_transfers = rules.free_transfers_max_banked
-        recommendation = recommend_transfers(squad_h, pool_h, bank, free_transfers, rules)
+        recommendation = recommend_transfers(squad_h, pool_h, bank, free_transfers, rules, core_player_ids=season_plan.core_player_ids)
 
-        xi_input = squad_h.assign(predicted_points=squad_h["horizon_points"] / horizon)
-        starting_xi, _bench = select_starting_xi(xi_input, rules)
+        starting_xi, _bench = select_starting_xi(squad_h, rules)
         vol_table = add_minutes_volatility(table[table["season"] == target_season], group_keys=["season", "element"])
         latest_vol = vol_table[vol_table["GW"] == as_of_gw - 1][["name", "minutes_volatility"]]
         starting_xi = starting_xi.merge(latest_vol, left_on="web_name", right_on="name", how="left")
@@ -293,6 +278,8 @@ def run_replay(target_season: str, as_of_gw: int, horizon: int = HORIZON) -> dic
             "captaincy_ranked": ranked,
             "actual_transfer_points": actual_transfer_points,
             "actual_captain_points": actual_captain_points,
+            "season_plan": season_plan,
+            "chip_suggestions": chip_suggestions,
         }
         _finish_run(run_id, "success", f"replayed {target_season} GW{as_of_gw}")
         return result
@@ -301,8 +288,8 @@ def run_replay(target_season: str, as_of_gw: int, horizon: int = HORIZON) -> dic
         raise
 
 
+# Prints a human-readable replay report, including what actually happened for sanity-checking.
 def print_replay_report(result: dict) -> None:
-    """Prints a human-readable replay report, including what actually happened for sanity-checking."""
     target_season, as_of_gw, horizon = result["target_season"], result["as_of_gw"], result["horizon"]
     squad, recommendation = result["squad"], result["recommendation"]
 
@@ -326,6 +313,8 @@ def print_replay_report(result: dict) -> None:
     print(f"\nWhat actually happened in GW{as_of_gw}:")
     for name in ranked["web_name"].head(3):
         print(f"  {name}: {result['actual_captain_points'].get(name, 0):.0f} actual points")
+
+    print_season_plan_and_chip_suggestions(result["season_plan"], result["chip_suggestions"])
 
 
 if __name__ == "__main__":

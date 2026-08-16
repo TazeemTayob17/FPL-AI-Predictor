@@ -1,11 +1,11 @@
-"""Assembles model-ready feature tables: rolling form + fixture context, for historical training and live prediction."""
+# Assembles model-ready feature tables: rolling form + fixture context, for historical training and live prediction.
 
 from __future__ import annotations
 
 import pandas as pd
 
 from fpl_agent.features.fixtures_features import team_fixture_difficulty
-from fpl_agent.features.rolling_stats import add_rolling_features
+from fpl_agent.features.rolling_stats import ROLLING_STAT_COLUMNS, WINDOWS, add_rolling_features
 
 ADDITIVE_GW_STATS = (
     "total_points", "minutes", "goals_scored", "assists", "clean_sheets", "goals_conceded",
@@ -16,13 +16,12 @@ ADDITIVE_GW_STATS = (
 
 POSITION_ALIASES = {"GK": "GKP", "GKP": "GKP", "AM": "MID", "DEF": "DEF", "MID": "MID", "FWD": "FWD"}
 
+# The trained model always expects these columns to exist, even as all-NaN; guaranteed below.
+EXPECTED_ROLL_COLUMNS = [f"{stat}_roll{window}" for stat in ROLLING_STAT_COLUMNS for window in WINDOWS]
 
+
+# Sums additive per-fixture stats into one row per player per gameweek, correctly handling double-gameweeks.
 def collapse_to_gameweek(gw_rows: pd.DataFrame) -> pd.DataFrame:
-    """Sums additive per-fixture stats into one row per player per gameweek, correctly handling double-gameweeks.
-
-    `name`/`position`/`team` are carried through when present (historical vaastav rows), but aren't required -
-    a live element-summary pull has neither; the caller attaches position/team via a later merge with `players`.
-    """
     present_additive = [c for c in ADDITIVE_GW_STATS if c in gw_rows.columns]
     agg = {c: "sum" for c in present_additive}
     agg.update({c: "first" for c in ("name", "position", "team") if c in gw_rows.columns})
@@ -33,8 +32,8 @@ def collapse_to_gameweek(gw_rows: pd.DataFrame) -> pd.DataFrame:
     return collapsed
 
 
+# One row per team per gameweek: mean fixture difficulty, opponent strength, and DGW fixture count.
 def team_gameweek_context(fixtures: pd.DataFrame, teams: pd.DataFrame) -> pd.DataFrame:
-    """One row per team per gameweek: mean fixture difficulty, opponent strength, and DGW fixture count."""
     difficulty = team_fixture_difficulty(fixtures, teams)
     context = difficulty.groupby(["event", "team"], as_index=False).agg(
         difficulty=("difficulty", "mean"),
@@ -45,8 +44,8 @@ def team_gameweek_context(fixtures: pd.DataFrame, teams: pd.DataFrame) -> pd.Dat
     return context.rename(columns={"team": "team_id", "event": "GW"})
 
 
+# Builds one model-ready row per player per gameweek per season, with rolling features and fixture context.
 def build_training_table(gw_rows: pd.DataFrame, fixtures: pd.DataFrame, teams: pd.DataFrame) -> pd.DataFrame:
-    """Builds one model-ready row per player per gameweek per season, with rolling features and fixture context."""
     frames = []
     for season in sorted(gw_rows["season"].unique()):
         season_gw = collapse_to_gameweek(gw_rows[gw_rows["season"] == season])
@@ -62,11 +61,11 @@ def build_training_table(gw_rows: pd.DataFrame, fixtures: pd.DataFrame, teams: p
     return pd.concat(frames, ignore_index=True)
 
 
+# Builds one row per current player: their latest rolling form plus the target gameweek's fixture context.
 def build_current_features(
     player_histories: dict[int, pd.DataFrame], players: pd.DataFrame, fixtures_current: pd.DataFrame,
     teams_current: pd.DataFrame, target_gameweek: int,
 ) -> pd.DataFrame:
-    """Builds one row per current player: their latest rolling form plus the target gameweek's fixture context."""
     per_player_rows = []
     for player_id, history in player_histories.items():
         if history.empty:
@@ -86,4 +85,16 @@ def build_current_features(
     result = players.merge(form_table, left_on="player_id", right_on="element", how="left")
     result = result.merge(target_context, on="team_id", how="left")
     result["fixture_count"] = result["fixture_count"].fillna(0).astype(int)
+
+    # "value" has a live equivalent (now_cost_million); "selected" doesn't, so it's left missing instead of guessed.
+    if "value" not in result.columns:
+        result["value"] = float("nan")
+    result["value"] = result["value"].fillna(result["now_cost_million"] * 10)
+
+    # float("nan"), not pd.NA: LightGBM requires numeric dtypes even for all-missing columns; pd.NA produces object dtype.
+    for column in [*EXPECTED_ROLL_COLUMNS, "selected"]:
+        if column not in result.columns:
+            result[column] = float("nan")
+        else:
+            result[column] = pd.to_numeric(result[column], errors="coerce")
     return result

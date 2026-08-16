@@ -1,4 +1,4 @@
-"""Normalizes raw FPL API payloads into the SQLite snapshot tables and processed parquet files."""
+# Normalizes raw FPL API payloads into the SQLite snapshot tables and processed parquet files.
 
 from __future__ import annotations
 
@@ -19,11 +19,12 @@ PLAYER_COLUMNS = [
     "player_id", "web_name", "web_name_full", "team_id", "team_name", "team_short", "position",
     "now_cost_million", "form", "total_points", "selected_by_percent",
     "status", "news", "chance_of_playing_this_round", "chance_of_playing_next_round",
+    "transfers_in_event", "transfers_out_event", "cost_change_event",
 ]
 
 
+# Builds the current-players table from bootstrap-static and writes it to parquet + SQLite.
 def save_bootstrap(bootstrap: dict) -> pd.DataFrame:
-    """Builds the current-players table from bootstrap-static and writes it to parquet + SQLite."""
     players = _build_players_frame(bootstrap)
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     players.to_parquet(PROCESSED_DIR / "players_current.parquet", index=False)
@@ -33,16 +34,16 @@ def save_bootstrap(bootstrap: dict) -> pd.DataFrame:
     return players
 
 
+# Writes the fixture list to parquet for the features layer to consume later.
 def save_fixtures(fixtures: list) -> pd.DataFrame:
-    """Writes the fixture list to parquet for the features layer to consume later."""
     frame = pd.DataFrame(fixtures)
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     frame.to_parquet(PROCESSED_DIR / "fixtures_current.parquet", index=False)
     return frame
 
 
+# Joins raw player rows with team and position names into one readable table.
 def _build_players_frame(bootstrap: dict) -> pd.DataFrame:
-    """Joins raw player rows with team and position names into one readable table."""
     elements = pd.DataFrame(bootstrap["elements"])
     teams = pd.DataFrame(bootstrap["teams"])[["id", "name", "short_name"]].rename(
         columns={"id": "team", "name": "team_name", "short_name": "team_short"}
@@ -59,8 +60,8 @@ def _build_players_frame(bootstrap: dict) -> pd.DataFrame:
     return players[PLAYER_COLUMNS]
 
 
+# Finds the current (or next, pre-season) gameweek number from bootstrap-static's events list.
 def infer_current_gameweek(bootstrap: dict) -> int | None:
-    """Finds the current (or next, pre-season) gameweek number from bootstrap-static's events list."""
     events = bootstrap.get("events", [])
     for event in events:
         if event.get("is_current"):
@@ -71,8 +72,8 @@ def infer_current_gameweek(bootstrap: dict) -> int | None:
     return None
 
 
+# Inserts one snapshot row per player into SQLite, for tracking value/ownership trends over time.
 def _write_snapshots(players: pd.DataFrame, gameweek: int | None) -> None:
-    """Inserts one snapshot row per player into SQLite, for tracking value/ownership trends over time."""
     conn = get_connection()
     try:
         rows = [
@@ -98,8 +99,8 @@ def _write_snapshots(players: pd.DataFrame, gameweek: int | None) -> None:
         conn.close()
 
 
+# Upserts the automated player_status table from bootstrap-static's own injury/availability fields.
 def _write_player_status(players: pd.DataFrame) -> None:
-    """Upserts the automated player_status table from bootstrap-static's own injury/availability fields."""
     conn = get_connection()
     try:
         rows = [
@@ -133,8 +134,8 @@ def _write_player_status(players: pd.DataFrame) -> None:
         conn.close()
 
 
+# Overrides a player's automated status only when scraped data is more cautious than what's already stored.
 def enrich_player_status_from_scrape(scrape_rows: pd.DataFrame, db_path: Path = DEFAULT_DB_PATH) -> None:
-    """Overrides a player's automated status only when scraped data is more cautious than what's already stored."""
     conn = get_connection(db_path)
     try:
         for row in scrape_rows.itertuples():
@@ -157,8 +158,8 @@ def enrich_player_status_from_scrape(scrape_rows: pd.DataFrame, db_path: Path = 
         conn.close()
 
 
+# Appends RSS-sourced news text to player_status without touching the structured status/chance fields.
 def enrich_player_status_from_rss(rss_rows: pd.DataFrame, db_path: Path = DEFAULT_DB_PATH) -> None:
-    """Appends RSS-sourced news text to player_status without touching the structured status/chance fields."""
     conn = get_connection(db_path)
     try:
         for row in rss_rows.itertuples():
@@ -175,8 +176,8 @@ def enrich_player_status_from_rss(rss_rows: pd.DataFrame, db_path: Path = DEFAUL
         conn.close()
 
 
+# Replays each gameweek's transfers to compute free transfers banked, skipping GW1 and wildcard/free-hit weeks.
 def compute_free_transfers(history: dict, rules: SquadRules) -> int:
-    """Replays each gameweek's transfers to compute free transfers banked, skipping GW1 and wildcard/free-hit weeks."""
     chip_gameweeks = {
         chip["event"] for chip in history.get("chips", []) if chip.get("name") in UNLIMITED_TRANSFER_CHIPS
     }
@@ -194,10 +195,10 @@ def compute_free_transfers(history: dict, rules: SquadRules) -> int:
     return free_transfers
 
 
+# Normalizes live entry/history/picks data into the team_snapshot table; returns None if picks aren't live yet.
 def save_team_snapshot(
     entry: dict, history: dict, picks: dict | None, rules: SquadRules, db_path: Path = DEFAULT_DB_PATH
 ) -> dict | None:
-    """Normalizes live entry/history/picks data into the team_snapshot table; returns None if picks aren't live yet."""
     if picks is None:
         return None
 
@@ -242,16 +243,45 @@ def save_team_snapshot(
     }
 
 
+# Flattens a leagues-classic standings payload into one row per manager: rank, points, points behind the leader.
+def normalize_league_standings(raw: dict, league_id: int) -> pd.DataFrame:
+    results = raw.get("standings", {}).get("results", [])
+    standings = pd.DataFrame(
+        results, columns=["entry", "entry_name", "player_name", "rank", "last_rank", "total", "event_total"]
+    )
+    standings = standings.rename(columns={"entry": "team_id"})
+    standings["league_id"] = league_id
+    if not standings.empty:
+        leader_total = standings["total"].max()
+        standings["points_behind_leader"] = leader_total - standings["total"]
+    return standings
+
+
+# Reads price/ownership/form snapshots over time, optionally for one player - the raw input to a value-trajectory view.
+def read_snapshot_history(player_id: int | None = None, db_path: Path = DEFAULT_DB_PATH) -> pd.DataFrame:
+    conn = get_connection(db_path)
+    try:
+        query = "SELECT * FROM snapshots"
+        params: tuple = ()
+        if player_id is not None:
+            query += " WHERE player_id = ?"
+            params = (player_id,)
+        query += " ORDER BY pulled_at"
+        return pd.read_sql_query(query, conn, params=params)
+    finally:
+        conn.close()
+
+
+# Converts a tenths-of-a-million integer (the API's bank/value unit) to millions, or None if unset.
 def _tenths_to_million(value: object) -> float | None:
-    """Converts a tenths-of-a-million integer (the API's bank/value unit) to millions, or None if unset."""
     return None if value is None else value / 10
 
 
+# Converts a pandas value to a plain float, or None if it's NaN.
 def _float_or_none(value: object) -> float | None:
-    """Converts a pandas value to a plain float, or None if it's NaN."""
     return None if pd.isna(value) else float(value)
 
 
+# Converts a pandas value to a plain int, or None if it's NaN.
 def _int_or_none(value: object) -> int | None:
-    """Converts a pandas value to a plain int, or None if it's NaN."""
     return None if pd.isna(value) else int(value)

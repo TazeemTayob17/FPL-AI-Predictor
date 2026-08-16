@@ -1,4 +1,4 @@
-"""Weekly transfer optimizer: searches 0-2 transfer moves maximizing horizon points net of transfer-hit costs."""
+# Weekly transfer optimizer: searches 0-2 transfer moves maximizing horizon points net of transfer-hit costs.
 
 from __future__ import annotations
 
@@ -10,7 +10,11 @@ from fpl_agent.optimizer.squad_optimizer import COST_SCALE, POINTS_SCALE, Infeas
 
 MAX_TRANSFERS_SEARCHED = 2
 
+# Predicted-points-equivalent penalty for dropping a season_planner "core" player - soft, not a hard ban.
+CORE_SELL_PENALTY = 2.0
 
+
+# Recommends the best 0-2 transfer move and explains it, including why a hit was or wasn't worth taking.
 def recommend_transfers(
     current_squad: pd.DataFrame,
     player_pool: pd.DataFrame,
@@ -18,14 +22,15 @@ def recommend_transfers(
     free_transfers: int,
     rules: SquadRules | None = None,
     max_transfers: int = MAX_TRANSFERS_SEARCHED,
+    core_player_ids: set[int] | None = None,
 ) -> dict:
-    """Recommends the best 0-2 transfer move and explains it, including why a hit was or wasn't worth taking."""
     rules = rules or load_rules()
+    core_player_ids = core_player_ids or set()
     squad = current_squad.reset_index(drop=True)
     pool = player_pool[~player_pool["player_id"].isin(squad["player_id"])].reset_index(drop=True)
     hit_cost = abs(rules.points_hit_per_extra_transfer)
 
-    best = _solve_transfer_move(squad, pool, bank, free_transfers, rules, max_transfers, min_transfers=0)
+    best = _solve_transfer_move(squad, pool, bank, free_transfers, rules, max_transfers, min_transfers=0, core_player_ids=core_player_ids)
     if best is None:
         raise InfeasibleSquadError(
             "No transfer combination (including making none) satisfies the budget/composition/club-cap constraints."
@@ -46,12 +51,19 @@ def recommend_transfers(
                 f"{buy['web_name']} in for {sell['web_name']}: "
                 f"{buy['horizon_points']:.1f} vs {sell['horizon_points']:.1f} predicted points over the horizon."
             )
+            if sell["player_id"] in core_player_ids:
+                reasoning.append(
+                    f"Note: {sell['web_name']} is a season-plan core player - this sale still cleared a "
+                    f"{CORE_SELL_PENALTY:.1f} pt alignment penalty on top of the raw points gain."
+                )
         if best["hits"] > 0:
             reasoning.append(f"{best['hits']} hit(s) taken (-{best['hits'] * hit_cost:.0f} pts) - the gain clearly exceeds the cost.")
 
     alternative = None
     if best["hits"] == 0 and free_transfers < max_transfers:
-        alternative = _solve_transfer_move(squad, pool, bank, free_transfers, rules, max_transfers, min_transfers=free_transfers + 1)
+        alternative = _solve_transfer_move(
+            squad, pool, bank, free_transfers, rules, max_transfers, min_transfers=free_transfers + 1, core_player_ids=core_player_ids
+        )
     if alternative is not None:
         alt_net = alternative["horizon_points"] - alternative["hits"] * hit_cost
         if alt_net <= best_net:
@@ -71,11 +83,11 @@ def recommend_transfers(
     }
 
 
+# Solves one CP-SAT transfer search, bounding the number of transfers to [min_transfers, max_transfers].
 def _solve_transfer_move(
     squad: pd.DataFrame, pool: pd.DataFrame, bank: float, free_transfers: int, rules: SquadRules,
-    max_transfers: int, min_transfers: int,
+    max_transfers: int, min_transfers: int, core_player_ids: set[int] | None = None,
 ) -> dict | None:
-    """Solves one CP-SAT transfer search, bounding the number of transfers to [min_transfers, max_transfers]."""
     n_squad, n_pool = len(squad), len(pool)
     model = cp_model.CpModel()
     keep = [model.new_bool_var(f"keep_{i}") for i in range(n_squad)]
@@ -110,7 +122,13 @@ def _solve_transfer_move(
     pool_points = (pool["horizon_points"] * POINTS_SCALE).round().astype(int)
     total_points = sum(keep[i] * int(squad_points[i]) for i in range(n_squad)) + sum(add[j] * int(pool_points[j]) for j in range(n_pool))
     hit_cost_scaled = int(abs(rules.points_hit_per_extra_transfer) * POINTS_SCALE)
-    model.maximize(total_points - hits * hit_cost_scaled)
+
+    core_player_ids = core_player_ids or set()
+    core_idx = squad.index[squad["player_id"].isin(core_player_ids)].tolist()
+    core_penalty_scaled = int(CORE_SELL_PENALTY * POINTS_SCALE)
+    core_sell_penalty = sum((1 - keep[i]) * core_penalty_scaled for i in core_idx)
+
+    model.maximize(total_points - hits * hit_cost_scaled - core_sell_penalty)
 
     solver = cp_model.CpSolver()
     solver.parameters.num_search_workers = 8

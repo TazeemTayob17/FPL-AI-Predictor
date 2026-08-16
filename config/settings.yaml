@@ -5,7 +5,7 @@ season:
 
 team:
   # fpl_team_id lives in .env (FPL_TEAM_ID), not here
-  mini_league_ids: []
+  mini_league_ids: [121412]
 
 rules:
   budget_million: 100.0
