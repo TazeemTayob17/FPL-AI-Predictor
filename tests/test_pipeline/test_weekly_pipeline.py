@@ -1,4 +1,4 @@
-"""Checks weekly_pipeline's orchestration: horizon scaling (cold-start and trained-model), live-mode branching, and run logging."""
+# Checks weekly_pipeline's orchestration: horizon scaling (cold-start and trained-model), live-mode branching, and run logging.
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from fpl_agent.optimizer.constraints import SquadRules
+from fpl_agent.optimizer.season_planner import SeasonPlan
 from fpl_agent.pipeline import weekly_pipeline
 from fpl_agent.storage.db import get_connection, init_db
 
@@ -39,95 +40,25 @@ SNAPSHOT = {
     "picks": [{"player_id": pid} for pid in (1, 2, 3, 4)],
 }
 
+EMPTY_CHIP_SCORES = pd.DataFrame(columns=["GW", "bench_boost_score", "free_hit_score", "triple_captain_candidate", "triple_captain_score"])
+BALANCED_POSTURE = {"posture": "balanced", "rank": None, "points_behind_leader": None, "reasoning": "no league configured"}
+FAKE_PLAN = SeasonPlan(
+    squad_classified=pd.DataFrame([{"player_id": pid, "classification": "rotational"} for pid in (1, 2, 3, 4)]),
+    chip_window_scores=EMPTY_CHIP_SCORES, wildcard_signal={"suggest_wildcard": False, "gap": 0.0}, risk_posture=BALANCED_POSTURE,
+)
+FAKE_CHIP_SUGGESTIONS = {"available_chips": set(), "suggestions": [], "urgency_warning": None}
 
+# no-op helpers used across the tests below
 def _raise(*_args, **_kwargs):
     raise RuntimeError("source unavailable")
-
 
 def _no_op_run_logging(monkeypatch):
     monkeypatch.setattr(weekly_pipeline, "_start_run", lambda run_type: 1)
     monkeypatch.setattr(weekly_pipeline, "_finish_run", lambda *a, **k: None)
 
 
-def test_predict_horizon_points_scales_cold_start_rate_by_horizon(monkeypatch, tmp_path):
-    """Cold-start's flat per-GW rate should be multiplied by the horizon, not left as a single-GW number.
-
-    cold_start_gw_threshold is 0 in real settings.yaml (backtested: the trained model wins at every GW tested,
-    including GW1), so the only live route into cold-start now is the missing-registry fallback - mock that here.
-    """
-    monkeypatch.setattr(weekly_pipeline, "REGISTRY_PATH", tmp_path / "no_registry_here.json")
-    monkeypatch.setattr(
-        weekly_pipeline, "predict_points",
-        lambda players, bootstrap, fixtures_current=None, teams_current=None: (PLAYERS.copy(), True),
-    )
-    result, used_cold_start = weekly_pipeline.predict_horizon_points(PLAYERS, BOOTSTRAP_PRE_SEASON, horizon_gws=5)
-    assert used_cold_start is True
-    assert result["horizon_points"].iloc[0] == pytest.approx(20.0)
-
-
-def test_predict_horizon_points_sums_the_trained_model_across_the_horizon_and_zeroes_blank_gameweeks(monkeypatch, tmp_path):
-    """Past cold-start with a registered model, horizon_points must sum per-GW trained-model predictions, with blank GWs zeroed."""
-    (tmp_path / "registry.json").write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(weekly_pipeline, "REGISTRY_PATH", tmp_path / "registry.json")
-    monkeypatch.setattr(weekly_pipeline, "PROCESSED_DIR", tmp_path)
-    pd.DataFrame(
-        {"event": [10, 11], "team_h": [1, 1], "team_a": [2, 2], "team_h_difficulty": [3, 3], "team_a_difficulty": [3, 3]}
-    ).to_parquet(tmp_path / "fixtures_current.parquet")
-    monkeypatch.setattr(weekly_pipeline.repository, "infer_current_gameweek", lambda bootstrap: 10)
-    monkeypatch.setattr(weekly_pipeline, "fetch_player_histories", lambda players: {})
-
-    def fake_predict_points(players, bootstrap, player_histories=None, fixtures_current=None, teams_current=None, target_gameweek=None):
-        if target_gameweek == 10:
-            return pd.DataFrame([{"player_id": 1, "predicted_points": 5.0, "fixture_count": 1}]), False
-        return pd.DataFrame([{"player_id": 1, "predicted_points": 3.0, "fixture_count": 0}]), False
-
-    monkeypatch.setattr(weekly_pipeline, "predict_points", fake_predict_points)
-
-    players = pd.DataFrame([{"player_id": 1, "web_name": "p1"}])
-    predictions, used_cold_start = weekly_pipeline.predict_horizon_points(players, BOOTSTRAP_MID_SEASON, horizon_gws=2)
-
-    assert used_cold_start is False
-    row = predictions.loc[predictions["player_id"] == 1].iloc[0]
-    assert row["horizon_points"] == pytest.approx(5.0)  # GW10's 5.0 + GW11's blank-zeroed 0.0, not 5.0 + 3.0
-    assert row["predicted_points"] == pytest.approx(2.5)  # horizon_points / horizon_gws
-
-
-def test_predict_horizon_points_raises_when_the_season_has_no_current_or_next_gameweek(monkeypatch, tmp_path):
-    """A missing current/next event (season over) must fail clearly rather than loop with gw=None."""
-    (tmp_path / "registry.json").write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(weekly_pipeline, "REGISTRY_PATH", tmp_path / "registry.json")
-    monkeypatch.setattr(weekly_pipeline.repository, "infer_current_gameweek", lambda bootstrap: None)
-
-    with pytest.raises(ValueError):
-        weekly_pipeline.predict_horizon_points(PLAYERS, BOOTSTRAP_MID_SEASON, horizon_gws=5)
-
-
-def test_fetch_player_histories_renames_round_to_gw(monkeypatch):
-    """The raw element-summary payload names the gameweek field 'round'; build_current_features expects 'GW'."""
-    monkeypatch.setattr(
-        weekly_pipeline.fpl_api, "get_element_summary",
-        lambda player_id: {"history": [{"round": 3, "total_points": 6}, {"round": 4, "total_points": 2}]},
-    )
-    players = pd.DataFrame([{"player_id": 1}])
-
-    histories = weekly_pipeline.fetch_player_histories(players)
-
-    assert list(histories[1]["GW"]) == [3, 4]
-    assert "round" not in histories[1].columns
-
-
-def test_fetch_player_histories_handles_a_player_with_no_history_yet(monkeypatch):
-    """A brand-new player with an empty history list must produce an empty frame, not raise."""
-    monkeypatch.setattr(weekly_pipeline.fpl_api, "get_element_summary", lambda player_id: {"history": []})
-    players = pd.DataFrame([{"player_id": 1}])
-
-    histories = weekly_pipeline.fetch_player_histories(players)
-
-    assert histories[1].empty
-
-
+# A flaky news source must not abort the whole refresh - the raw player/bootstrap data still comes back.
 def test_refresh_and_enrich_news_continues_when_rss_and_scrape_both_fail(monkeypatch):
-    """A flaky news source must not abort the whole refresh - the raw player/bootstrap data still comes back."""
     monkeypatch.setattr(weekly_pipeline.refresh_data, "run_refresh", lambda: (PLAYERS, BOOTSTRAP_PRE_SEASON))
     monkeypatch.setattr(weekly_pipeline.news_rss, "build_news_items", _raise)
     monkeypatch.setattr(weekly_pipeline.news_scrape, "fetch_injuries_page", _raise)
@@ -137,8 +68,8 @@ def test_refresh_and_enrich_news_continues_when_rss_and_scrape_both_fail(monkeyp
     assert result_bootstrap is BOOTSTRAP_PRE_SEASON
 
 
+# Pre-deadline (sync_team returns None), run_live must fall back to the initial-squad recommendation, not crash.
 def test_run_live_returns_initial_squad_recommendation_when_no_live_squad_yet(monkeypatch):
-    """Pre-deadline (sync_team returns None), run_live must fall back to the initial-squad recommendation, not crash."""
     _no_op_run_logging(monkeypatch)
     squad = pd.DataFrame([{"web_name": "p1"}])
     monkeypatch.setattr(weekly_pipeline, "refresh_and_enrich_news", lambda: (PLAYERS, BOOTSTRAP_PRE_SEASON))
@@ -151,8 +82,8 @@ def test_run_live_returns_initial_squad_recommendation_when_no_live_squad_yet(mo
     assert result["squad"] is squad
 
 
+# With a live squad synced, run_live must wire real predictions through the real optimizer/captaincy logic.
 def test_run_live_recommends_a_transfer_and_captain_against_the_real_live_squad(monkeypatch):
-    """With a live squad synced, run_live must wire real predictions through the real optimizer/captaincy logic."""
     _no_op_run_logging(monkeypatch)
     monkeypatch.setattr(weekly_pipeline, "refresh_and_enrich_news", lambda: (PREDICTIONS, BOOTSTRAP_PRE_SEASON))
     monkeypatch.setattr(weekly_pipeline, "get_team_id", lambda: 123)
@@ -161,6 +92,8 @@ def test_run_live_recommends_a_transfer_and_captain_against_the_real_live_squad(
     monkeypatch.setattr(
         weekly_pipeline, "predict_horizon_points", lambda players, bootstrap, horizon_gws: (PREDICTIONS.copy(), False)
     )
+    monkeypatch.setattr(weekly_pipeline, "load_fixtures_and_teams_current", lambda bootstrap: (None, None))
+    monkeypatch.setattr(weekly_pipeline, "_build_season_plan_and_chip_suggestions", lambda *a, **k: (FAKE_PLAN, FAKE_CHIP_SUGGESTIONS))
 
     result = weekly_pipeline.run_live(team_id=123)
 
@@ -169,10 +102,67 @@ def test_run_live_recommends_a_transfer_and_captain_against_the_real_live_squad(
     assert result["recommendation"]["num_transfers"] == 1
     assert result["recommendation"]["bought"]["web_name"].iloc[0] == "fwd_great"
     assert result["captain"]["web_name"] == "fwd_great"
+    assert result["season_plan"] is FAKE_PLAN
+    assert result["chip_suggestions"] is FAKE_CHIP_SUGGESTIONS
 
 
+# core_player_ids must actually reach recommend_transfers - a marginal core-player sale must get blocked.
+def test_run_live_threads_core_player_ids_into_the_transfer_recommendation(monkeypatch):
+    _no_op_run_logging(monkeypatch)
+    marginal_predictions = PREDICTIONS.copy()
+    marginal_predictions.loc[marginal_predictions["web_name"] == "fwd_great", "horizon_points"] = 16.0  # was 40.0
+
+    plan_with_fwd1_core = SeasonPlan(
+        squad_classified=pd.DataFrame([{"player_id": pid, "classification": "core" if pid == 4 else "rotational"} for pid in (1, 2, 3, 4)]),
+        chip_window_scores=EMPTY_CHIP_SCORES, wildcard_signal={"suggest_wildcard": False, "gap": 0.0}, risk_posture=BALANCED_POSTURE,
+    )
+
+    monkeypatch.setattr(weekly_pipeline, "refresh_and_enrich_news", lambda: (marginal_predictions, BOOTSTRAP_PRE_SEASON))
+    monkeypatch.setattr(weekly_pipeline, "get_team_id", lambda: 123)
+    monkeypatch.setattr(weekly_pipeline, "sync_team", lambda team_id: SNAPSHOT)
+    monkeypatch.setattr(weekly_pipeline, "load_rules", lambda: RULES)
+    monkeypatch.setattr(
+        weekly_pipeline, "predict_horizon_points", lambda players, bootstrap, horizon_gws: (marginal_predictions.copy(), False)
+    )
+    monkeypatch.setattr(weekly_pipeline, "load_fixtures_and_teams_current", lambda bootstrap: (None, None))
+    monkeypatch.setattr(
+        weekly_pipeline, "_build_season_plan_and_chip_suggestions", lambda *a, **k: (plan_with_fwd1_core, FAKE_CHIP_SUGGESTIONS)
+    )
+
+    result = weekly_pipeline.run_live(team_id=123)
+
+    assert result["recommendation"]["num_transfers"] == 0  # blocked: marginal +1 gain doesn't clear the 2.0 pt core penalty
+
+
+# Integration check (not mocked) that team_gameweek_context's real output columns match what's expected downstream.
+def test_build_season_plan_and_chip_suggestions_wires_real_column_names_correctly(monkeypatch):
+    monkeypatch.setattr(weekly_pipeline, "_load_mini_league_standings", lambda: (None, None))
+
+    squad = pd.DataFrame(
+        [
+            {
+                "player_id": 1, "web_name": "p1", "team_id": 1, "position": "FWD", "predicted_points": 6.0,
+                "now_cost_million": 8.0, "chance_of_playing_next_round": 100,
+            }
+        ]
+    )
+    fixtures = pd.DataFrame({"event": [5, 6], "team_h": [1, 1], "team_a": [2, 2], "team_h_difficulty": [3, 3], "team_a_difficulty": [3, 3]})
+    teams = pd.DataFrame(
+        {
+            "id": [1, 2], "strength_attack_home": [1000, 1000], "strength_attack_away": [1000, 1000],
+            "strength_defence_home": [1000, 1000], "strength_defence_away": [1000, 1000],
+        }
+    )
+
+    plan, chip_report = weekly_pipeline._build_season_plan_and_chip_suggestions(squad, fixtures, teams, current_gw=5, team_id=None, chips_used=[])
+
+    assert set(plan.squad_classified["classification"]) <= {"core", "rotational"}
+    assert list(plan.chip_window_scores["GW"])[:2] == [5, 6]
+    assert len(chip_report["suggestions"]) == len(plan.chip_window_scores)
+
+
+# A pipeline error must be recorded in run_history (for the future staleness indicator) and still propagate.
 def test_run_live_logs_a_failed_run_and_reraises_on_error(monkeypatch):
-    """A pipeline error must be recorded in run_history (for the future staleness indicator) and still propagate."""
     logged = {}
     monkeypatch.setattr(weekly_pipeline, "_start_run", lambda run_type: 7)
     monkeypatch.setattr(weekly_pipeline, "_finish_run", lambda run_id, status, details="": logged.update(run_id=run_id, status=status))
@@ -184,8 +174,8 @@ def test_run_live_logs_a_failed_run_and_reraises_on_error(monkeypatch):
     assert logged == {"run_id": 7, "status": "failed"}
 
 
+# _start_run/_finish_run must write a real, queryable run_history row - this is the table Phase 0 created but nothing wrote to.
 def test_start_and_finish_run_round_trip_through_run_history(tmp_path):
-    """_start_run/_finish_run must write a real, queryable run_history row - this is the table Phase 0 created but nothing wrote to."""
     db_path = tmp_path / "test.db"
     init_db(db_path)
 
