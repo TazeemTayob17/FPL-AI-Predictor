@@ -17,6 +17,7 @@ from fpl_agent.storage.repository import PROCESSED_DIR, infer_current_gameweek
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SETTINGS_PATH = PROJECT_ROOT / "config" / "settings.yaml"
 REGISTRY_PATH = PROJECT_ROOT / "models" / "registry.json"
+PLAYER_HISTORY_FRESHNESS_HOURS = 20.0  # reuse a same-day fetch instead of re-pulling all ~600 players on every manual run
 
 
 # Counts how many of this season's gameweeks have finished, to decide whether cold-start or the trained model applies.
@@ -78,11 +79,11 @@ def predict_points(
     return predict_with_trained_models(features, models), False
 
 
-# Fetches each current player's this-season match history - one element-summary API call per player, uncached.
-def fetch_player_histories(players: pd.DataFrame) -> dict[int, pd.DataFrame]:
+# Fetches each current player's this-season match history, reusing same-day cached pulls to avoid ~600 calls per run.
+def fetch_player_histories(players: pd.DataFrame, max_age_hours: float = PLAYER_HISTORY_FRESHNESS_HOURS) -> dict[int, pd.DataFrame]:
     histories = {}
     for player_id in players["player_id"]:
-        summary = fpl_api.get_element_summary(int(player_id))
+        summary = fpl_api.get_element_summary(int(player_id), max_age_hours=max_age_hours)
         history = pd.DataFrame(summary.get("history", []))
         if not history.empty:
             history = history.rename(columns={"round": "GW"})

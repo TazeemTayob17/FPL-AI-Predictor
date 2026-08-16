@@ -36,7 +36,7 @@ def test_should_use_cold_start_at_or_above_threshold():
 def test_fetch_player_histories_renames_round_to_gw(monkeypatch):
     monkeypatch.setattr(
         predict_module.fpl_api, "get_element_summary",
-        lambda player_id: {"history": [{"round": 3, "total_points": 6}, {"round": 4, "total_points": 2}]},
+        lambda player_id, max_age_hours=None: {"history": [{"round": 3, "total_points": 6}, {"round": 4, "total_points": 2}]},
     )
     players = pd.DataFrame([{"player_id": 1}])
 
@@ -48,12 +48,26 @@ def test_fetch_player_histories_renames_round_to_gw(monkeypatch):
 
 # A brand-new player with an empty history list must produce an empty frame, not raise.
 def test_fetch_player_histories_handles_a_player_with_no_history_yet(monkeypatch):
-    monkeypatch.setattr(predict_module.fpl_api, "get_element_summary", lambda player_id: {"history": []})
+    monkeypatch.setattr(predict_module.fpl_api, "get_element_summary", lambda player_id, max_age_hours=None: {"history": []})
     players = pd.DataFrame([{"player_id": 1}])
 
     histories = fetch_player_histories(players)
 
     assert histories[1].empty
+
+
+# fetch_player_histories must forward its freshness window to get_element_summary so daily manual runs reuse today's pull.
+def test_fetch_player_histories_passes_max_age_hours_through(monkeypatch):
+    seen_max_age = []
+    monkeypatch.setattr(
+        predict_module.fpl_api, "get_element_summary",
+        lambda player_id, max_age_hours=None: seen_max_age.append(max_age_hours) or {"history": []},
+    )
+    players = pd.DataFrame([{"player_id": 1}])
+
+    fetch_player_histories(players, max_age_hours=6.0)
+
+    assert seen_max_age == [6.0]
 
 
 # Cold-start's flat per-GW rate should be multiplied by the horizon, not left as a single-GW number.

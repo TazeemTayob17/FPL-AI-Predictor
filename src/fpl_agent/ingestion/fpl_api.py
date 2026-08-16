@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import requests
 
-from fpl_agent.ingestion.cache import save_json
+from fpl_agent.ingestion.cache import load_latest_json_if_fresh, save_json
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 
@@ -24,8 +24,12 @@ def get_fixtures(event: int | None = None) -> list:
     return data
 
 
-# Fetches one player's match-by-match history.
-def get_element_summary(player_id: int) -> dict:
+# Fetches one player's match-by-match history, reusing a cached pull younger than max_age_hours if given.
+def get_element_summary(player_id: int, max_age_hours: float | None = None) -> dict:
+    if max_age_hours is not None:
+        cached = load_latest_json_if_fresh(f"element_summary/{player_id}", max_age_hours)
+        if cached is not None:
+            return cached
     data = _get(f"{BASE_URL}/element-summary/{player_id}/")
     save_json(f"element_summary/{player_id}", data)
     return data
