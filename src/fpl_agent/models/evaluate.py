@@ -146,14 +146,15 @@ def train_as_of(table: pd.DataFrame, target_season: str, as_of_gw: int, columns:
     return models
 
 
-# Predicts the next `horizon` gameweeks: rolling form held at its as_of_gw snapshot, fixture context varies per week.
+# Predicts the next `horizon` gameweeks: form held at each player's latest row at/before as_of_gw, fixture context varies per GW.
 def build_horizon_points(
     table: pd.DataFrame, target_season: str, as_of_gw: int, horizon: int, models: dict, columns: list[str]
 ) -> pd.DataFrame:
     roll_cols = [c for c in columns if any(c.endswith(f"_roll{w}") for w in WINDOWS)]
     context_cols = [c for c in columns if c not in roll_cols]
 
-    form = table[(table["season"] == target_season) & (table["GW"] == as_of_gw)][["name", "position", *roll_cols]]
+    prior_rows = table[(table["season"] == target_season) & (table["GW"] <= as_of_gw)].sort_values("GW")
+    form = prior_rows.groupby("name", as_index=False).tail(1)[["name", "position", *roll_cols]]
 
     horizon_rows = []
     for gw in range(as_of_gw, as_of_gw + horizon):

@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from fpl_agent.models.evaluate import simulate_season_transfers
+from fpl_agent.models.evaluate import build_horizon_points, simulate_season_transfers
 from fpl_agent.optimizer.constraints import SquadRules
 
 RULES = SquadRules(
@@ -74,3 +74,39 @@ def test_simulate_season_transfers_works_with_season_planner_guidance_too():
 
     assert list(result["weekly_log"]["GW"]) == [1, 2]
     assert len(result["final_squad"]) == RULES.squad_size
+
+
+# A model that just sums its input columns, standing in for a trained LightGBM booster in these unit tests.
+class _SumModel:
+    def predict(self, X):
+        return X.sum(axis=1)
+
+
+# A blank gameweek exactly at as_of_gw must not zero the whole horizon - other weeks still use the player's last known form.
+def test_build_horizon_points_carries_form_forward_across_a_blank_at_as_of_gw():
+    table = pd.DataFrame(
+        [
+            {"season": "s", "GW": 1, "name": "A", "position": "MID", "form_roll3": 5.0, "fixture_count": 1},
+            {"season": "s", "GW": 3, "name": "A", "position": "MID", "form_roll3": 5.0, "fixture_count": 1},
+        ]
+    )
+    result = build_horizon_points(
+        table, "s", as_of_gw=2, horizon=2, models={"MID": _SumModel()}, columns=["form_roll3", "fixture_count"]
+    )
+
+    assert result.loc[result["web_name"] == "A", "horizon_points"].iloc[0] > 0
+
+
+# A gameweek the player genuinely blanks (no fixture) must still contribute 0, even once form carries forward.
+def test_build_horizon_points_still_zeroes_the_blank_gameweek_itself():
+    table = pd.DataFrame(
+        [
+            {"season": "s", "GW": 1, "name": "A", "position": "MID", "form_roll3": 5.0, "fixture_count": 1},
+            {"season": "s", "GW": 3, "name": "A", "position": "MID", "form_roll3": 5.0, "fixture_count": 1},
+        ]
+    )
+    result = build_horizon_points(
+        table, "s", as_of_gw=2, horizon=1, models={"MID": _SumModel()}, columns=["form_roll3", "fixture_count"]
+    )
+
+    assert result.loc[result["web_name"] == "A", "horizon_points"].iloc[0] == 0
