@@ -5,10 +5,10 @@ import streamlit as st
 
 from fpl_agent.optimizer.constraints import load_rules
 from fpl_agent.ui.components.staleness import render_staleness_and_refresh
+from fpl_agent.ui.components.theme import inject_fpl_css, render_pitch
 from fpl_agent.utils.env import get_team_id
 
-DISPLAY_COLUMNS = ["web_name", "team_short", "position", "now_cost_million", "predicted_points"]
-
+inject_fpl_css()
 st.title("Squad Planner")
 
 try:
@@ -31,9 +31,6 @@ else:
 
     st.metric("Squad value", f"£{squad['now_cost_million'].sum():.1f}m / £{rules.budget_million:.1f}m")
 
-    columns = [c for c in DISPLAY_COLUMNS if c in starting_xi.columns]
-    st.subheader("Starting XI")
-    st.dataframe(starting_xi[columns].sort_values(["position", "predicted_points"], ascending=[True, False]), use_container_width=True)
-
-    st.subheader("Bench")
-    st.dataframe(bench[columns], use_container_width=True)
+    captain_name = result.get("captain", {}).get("web_name") if result["mode"] == "live" else None
+    vice_captain_name = result.get("vice_captain", {}).get("web_name") if result["mode"] == "live" else None
+    render_pitch(starting_xi, bench, captain_name, vice_captain_name)

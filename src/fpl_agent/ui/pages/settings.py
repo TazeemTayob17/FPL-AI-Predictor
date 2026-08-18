@@ -2,6 +2,7 @@
 
 import streamlit as st
 
+from fpl_agent.ui.components.theme import inject_fpl_css
 from fpl_agent.utils.env import get_team_id, set_team_id
 from fpl_agent.utils.settings import (
     DIFFERENTIAL_AGGRESSIVENESS_CHOICES,
@@ -11,6 +12,7 @@ from fpl_agent.utils.settings import (
     save_mini_league_ids,
 )
 
+inject_fpl_css()
 st.title("Settings")
 
 st.subheader("Team ID")

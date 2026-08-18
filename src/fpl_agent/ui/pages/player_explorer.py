@@ -7,11 +7,13 @@ import yaml
 from fpl_agent.overrides.manager import apply_overrides
 from fpl_agent.storage.db import get_connection
 from fpl_agent.ui.components.staleness import render_staleness_and_refresh
+from fpl_agent.ui.components.theme import inject_fpl_css
 from fpl_agent.utils.env import get_team_id
 from fpl_agent.utils.settings import SETTINGS_PATH
 
 TEMPLATE_OWNERSHIP_THRESHOLD = 10.0  # % owned at/above which a player counts as "template" rather than "differential"
 
+inject_fpl_css()
 st.title("Player Explorer")
 
 try:
