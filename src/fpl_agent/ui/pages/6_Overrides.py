@@ -7,6 +7,7 @@ from fpl_agent.overrides.manager import create_override, deactivate_override, li
 from fpl_agent.storage.repository import PROCESSED_DIR
 from fpl_agent.ui.components.theme import inject_fpl_css
 
+st.set_page_config(layout="wide")
 inject_fpl_css()
 st.title("Overrides")
 st.caption("Manual overrides always take precedence over automated status and are never silently cleared by a refresh.")

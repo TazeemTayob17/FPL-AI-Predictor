@@ -6,7 +6,7 @@ from fpl_agent.ui.components.staleness import render_staleness_and_refresh
 from fpl_agent.ui.components.theme import inject_fpl_css
 from fpl_agent.utils.env import get_team_id
 
-st.set_page_config(page_title="FPL Agent", page_icon="⚽")
+st.set_page_config(page_title="FPL Agent", page_icon="⚽", layout="wide")
 inject_fpl_css()
 st.title("FPL Agent")
 

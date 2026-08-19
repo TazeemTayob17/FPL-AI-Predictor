@@ -8,6 +8,7 @@ from fpl_agent.ui.components.staleness import render_staleness_and_refresh
 from fpl_agent.ui.components.theme import inject_fpl_css, render_pitch
 from fpl_agent.utils.env import get_team_id
 
+st.set_page_config(layout="wide")
 inject_fpl_css()
 st.title("Squad Planner")
 
