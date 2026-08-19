@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from fpl_agent.features.rolling_stats import WINDOWS
+from fpl_agent.features.rolling_stats import WINDOWS, add_minutes_volatility
 from fpl_agent.models.naive_predictor import previous_season_label
 from fpl_agent.models.train import POSITIONS, TARGET_COLUMN, feature_columns, train_position_model
 from fpl_agent.optimizer.captaincy import choose_captaincy
@@ -186,6 +186,12 @@ def simulate_season_transfers(
     pool = target_season_player_pool(table, target_season, first_gw)
     candidates = pool.merge(first_points[["web_name", "horizon_points"]], on="web_name", how="inner")
     candidates = candidates.rename(columns={"horizon_points": "predicted_points"})
+
+    vol_table = add_minutes_volatility(table[table["season"] == target_season], group_keys=["season", "element"])
+    prior_volatility = vol_table[vol_table["GW"] < first_gw].sort_values("GW").groupby("name", as_index=False).tail(1)
+    candidates = candidates.merge(prior_volatility[["name", "minutes_volatility"]], left_on="web_name", right_on="name", how="left")
+    candidates["minutes_volatility"] = candidates["minutes_volatility"].fillna(0.0)
+
     squad, _initial_xi, _initial_bench = select_squad_and_starting_xi(candidates, rules)
     squad["player_id"] = squad["web_name"]
     pool["player_id"] = pool["web_name"]

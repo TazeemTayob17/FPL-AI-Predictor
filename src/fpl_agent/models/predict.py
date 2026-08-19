@@ -9,7 +9,8 @@ import lightgbm as lgb
 import pandas as pd
 import yaml
 
-from fpl_agent.features.build_features import EXPECTED_ROLL_COLUMNS, build_current_features
+from fpl_agent.features.build_features import EXPECTED_ROLL_COLUMNS, build_current_features, collapse_to_gameweek
+from fpl_agent.features.rolling_stats import add_minutes_volatility
 from fpl_agent.ingestion import fpl_api
 from fpl_agent.models.cold_start import build_opening_difficulty, predict_cold_start_points
 from fpl_agent.models.live_adjustments import apply_live_adjustments
@@ -127,6 +128,46 @@ def load_previous_season_form(players: pd.DataFrame, training_table_path: Path =
     return matched[["player_id", *EXPECTED_ROLL_COLUMNS]]
 
 
+# Each current player's rolling minutes volatility computed from this season's real history so far - empty pre-season, since there are no games to compute it from yet.
+def compute_current_minutes_volatility(player_histories: dict[int, pd.DataFrame]) -> pd.DataFrame:
+    rows = []
+    for player_id, history in player_histories.items():
+        if history.empty:
+            continue
+        collapsed = collapse_to_gameweek(history.assign(season="current", element=player_id))
+        volatility = add_minutes_volatility(collapsed, group_keys=["season", "element"])
+        rows.append(volatility.iloc[[-1]][["element", "minutes_volatility"]])
+    if not rows:
+        return pd.DataFrame(columns=["player_id", "minutes_volatility"])
+    return pd.concat(rows, ignore_index=True).rename(columns={"element": "player_id"})
+
+
+# Each current player's end-of-last-season minutes volatility, matched by full name - the GW1 fallback until this season has real history.
+def load_previous_season_minutes_volatility(players: pd.DataFrame, training_table_path: Path = PROCESSED_DIR / "training_table.parquet") -> pd.DataFrame:
+    if not training_table_path.exists() or "web_name_full" not in players.columns:
+        return pd.DataFrame(columns=["player_id", "minutes_volatility"])
+    table = pd.read_parquet(training_table_path, columns=["season", "GW", "name", "element", "minutes"])
+    last_season = table["season"].max()
+    volatility = add_minutes_volatility(table[table["season"] == last_season], group_keys=["season", "element"])
+    last_rows = volatility.sort_values("GW").groupby("name", as_index=False).tail(1)
+    matched = players[["player_id", "web_name_full"]].merge(last_rows, left_on="web_name_full", right_on="name", how="inner")
+    return matched[["player_id", "minutes_volatility"]]
+
+
+# Attaches minutes_volatility to predictions - current-season if the player has played this season, else last season's - for the squad optimizer's bench-reliability weighting.
+def attach_minutes_volatility(predictions: pd.DataFrame, player_histories: dict[int, pd.DataFrame]) -> pd.DataFrame:
+    current = compute_current_minutes_volatility(player_histories)
+    result = predictions.merge(current, on="player_id", how="left")
+    missing = result["minutes_volatility"].isna()
+    if missing.any():
+        previous = load_previous_season_minutes_volatility(predictions)
+        if not previous.empty:
+            fallback = result.loc[missing, ["player_id"]].merge(previous, on="player_id", how="left")
+            result.loc[missing, "minutes_volatility"] = fallback["minutes_volatility"].values
+    result["minutes_volatility"] = result["minutes_volatility"].fillna(0.0)
+    return result
+
+
 # Attaches `horizon_points`, summing the routed predictor's output across horizon_gws gameweeks.
 def predict_horizon_points(players: pd.DataFrame, bootstrap: dict, horizon_gws: int) -> tuple[pd.DataFrame, bool]:
     with SETTINGS_PATH.open(encoding="utf-8") as f:
@@ -170,5 +211,6 @@ def predict_horizon_points(players: pd.DataFrame, bootstrap: dict, horizon_gws: 
     predictions = players.merge(horizon_sum, on="player_id", how="left")
     predictions["horizon_points"] = predictions["horizon_points"].fillna(0.0)
     predictions["predicted_points"] = predictions["horizon_points"] / horizon_gws
+    predictions = attach_minutes_volatility(predictions, player_histories)
     predictions = apply_live_adjustments(predictions, players, current_gw=next_gw)
     return predictions, False

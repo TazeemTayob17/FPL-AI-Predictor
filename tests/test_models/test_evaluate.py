@@ -50,7 +50,7 @@ def _build_synthetic_table() -> pd.DataFrame:
                         "season": target_season, "GW": gw, "element": element, "position": position,
                         "name": f"{position}_{variant}", "team": f"team_{team_id}", "team_id": team_id, "value": 50,
                         "selected": 10.0, "total_points": points, "difficulty": 3, "fixture_count": 1,
-                        "opponent_attack_strength": 1000, "opponent_defence_strength": 1000,
+                        "opponent_attack_strength": 1000, "opponent_defence_strength": 1000, "minutes": 90,
                     }
                 )
                 element += 1

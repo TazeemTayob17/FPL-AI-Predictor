@@ -123,3 +123,31 @@ def test_predict_horizon_points_raises_when_the_season_has_no_current_or_next_ga
     bootstrap_mid_season = {"events": [{"id": i, "finished": True} for i in range(1, 6)], "teams": []}
     with pytest.raises(ValueError):
         predict_module.predict_horizon_points(PLAYERS, bootstrap_mid_season, horizon_gws=5)
+
+
+# The last row's volatility must reflect the standard deviation of the player's own PRIOR minutes, not include the current game.
+def test_compute_current_minutes_volatility_reflects_real_minutes_swings():
+    history = pd.DataFrame({"GW": [1, 2, 3], "minutes": [90, 0, 90], "total_points": [6, 0, 8]})
+    result = predict_module.compute_current_minutes_volatility({1: history})
+    assert result.loc[result["player_id"] == 1, "minutes_volatility"].iloc[0] == pytest.approx(pd.Series([90, 0]).std())
+
+
+# A player with no current-season history yet must simply be absent from the result, not raise.
+def test_compute_current_minutes_volatility_skips_players_with_no_history():
+    result = predict_module.compute_current_minutes_volatility({1: pd.DataFrame()})
+    assert result.empty
+
+
+# With no current or previous-season data available, attach_minutes_volatility must default to 0, not NaN or a crash.
+def test_attach_minutes_volatility_defaults_to_zero_when_nothing_is_known():
+    predictions = pd.DataFrame([{"player_id": 1, "predicted_points": 5.0}])
+    result = predict_module.attach_minutes_volatility(predictions, {1: pd.DataFrame()})
+    assert result.loc[0, "minutes_volatility"] == 0.0
+
+
+# A player with real current-season history must use it, not the (absent) previous-season fallback.
+def test_attach_minutes_volatility_uses_current_season_data_when_available():
+    history = pd.DataFrame({"GW": [1, 2, 3], "minutes": [90, 0, 90], "total_points": [6, 0, 8]})
+    predictions = pd.DataFrame([{"player_id": 1, "predicted_points": 5.0}])
+    result = predict_module.attach_minutes_volatility(predictions, {1: history})
+    assert result.loc[0, "minutes_volatility"] == pytest.approx(pd.Series([90, 0]).std())

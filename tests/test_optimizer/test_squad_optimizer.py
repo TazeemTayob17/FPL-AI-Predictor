@@ -158,3 +158,25 @@ def test_select_squad_and_starting_xi_raises_when_infeasible():
     tiny_budget_rules = SquadRules(**{**JOINT_RULES.__dict__, "budget_million": 5.0})
     with pytest.raises(InfeasibleSquadError):
         select_squad_and_starting_xi(JOINT_POOL, tiny_budget_rules)
+
+
+VOLATILITY_POOL = pd.DataFrame(
+    [
+        {**_player("gk_starter", "C1", "GKP", 6, 30), "minutes_volatility": 0.0},
+        {**_player("gk_backup_reliable", "C2", "GKP", 4, 15), "minutes_volatility": 0.0},
+        {**_player("gk_backup_volatile", "C3", "GKP", 4, 15), "minutes_volatility": 45.0},
+        {**_player("mid_only", "C4", "MID", 5, 20), "minutes_volatility": 0.0},
+    ]
+)
+
+
+# Two bench candidates with identical price and predicted points, differing only in minutes reliability - the nailed-on one must win the bench slot, not an arbitrary tie-break.
+def test_select_squad_and_starting_xi_prefers_a_reliable_bench_player_over_an_equally_priced_volatile_one():
+    squad, starting_xi, bench = select_squad_and_starting_xi(VOLATILITY_POOL, JOINT_RULES)
+    assert set(bench["web_name"]) == {"gk_backup_reliable"}
+
+
+# Without a minutes_volatility column at all, the flat bench_weight_percent fallback must still apply (backward compatible).
+def test_select_squad_and_starting_xi_falls_back_to_flat_bench_weight_without_volatility_data():
+    squad, starting_xi, bench = select_squad_and_starting_xi(JOINT_POOL, JOINT_RULES, bench_weight_percent=5)
+    assert sorted(squad["web_name"]) == ["gk_backup_cheap", "gk_starter", "mid_great"]

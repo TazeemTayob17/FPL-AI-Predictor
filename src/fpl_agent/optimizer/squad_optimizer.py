@@ -9,7 +9,10 @@ from fpl_agent.optimizer.constraints import SquadRules, load_rules
 
 POINTS_SCALE = 100
 COST_SCALE = 10
-BENCH_POINTS_WEIGHT_PERCENT = 5  # a benched player's points barely count in the objective, so budget concentrates on the starting XI instead of a "balanced" but bench-heavy 15
+BENCH_POINTS_WEIGHT_PERCENT = 5  # flat fallback when no minutes_volatility signal is available
+BASE_BENCH_POINTS_WEIGHT_PERCENT = 2  # weight for a highly rotation-prone bench player
+RELIABLE_BENCH_BONUS_PERCENT = 8  # extra weight for a bench player with rock-solid, consistent minutes - up to 10% total, rewarding genuine auto-sub "insurance" picks over pure cost-cutting
+MINUTES_VOLATILITY_CAP = 45  # one full match's worth of swing in minutes, matching captaincy.py's existing risk-score normalization
 
 
 class InfeasibleSquadError(Exception):
@@ -117,10 +120,11 @@ def select_squad_and_starting_xi(
         model.add(sum(starts[i] for i in idx) >= rules.formation_min[position])
 
     scaled_points = (players["predicted_points"] * POINTS_SCALE).round().astype(int)
+    bench_weights = _bench_weight_percent_per_player(players, bench_weight_percent)
     objective_terms = []
     for i in range(n):
         objective_terms.append(starts[i] * int(scaled_points[i]))
-        bench_points = int(scaled_points[i]) * bench_weight_percent // 100
+        bench_points = int(scaled_points[i]) * int(bench_weights.iloc[i]) // 100
         objective_terms.append((picks[i] - starts[i]) * bench_points)
     model.maximize(sum(objective_terms))
 
@@ -138,6 +142,14 @@ def select_squad_and_starting_xi(
     starting_xi = players.loc[[i for i in squad_idx if i in starting_idx_set]].reset_index(drop=True)
     bench = players.loc[[i for i in squad_idx if i not in starting_idx_set]].reset_index(drop=True)
     return squad, starting_xi, bench
+
+
+# Weights each player's bench-points contribution by their own minutes reliability when known, so a nailed-on cheap bench player outweighs an equally-cheap rotation risk - falls back to a flat weight when no volatility signal is available.
+def _bench_weight_percent_per_player(players: pd.DataFrame, flat_weight_percent: int) -> pd.Series:
+    if "minutes_volatility" not in players.columns:
+        return pd.Series(flat_weight_percent, index=players.index)
+    reliability = 1 - (players["minutes_volatility"].fillna(0) / MINUTES_VOLATILITY_CAP).clip(upper=1)
+    return (BASE_BENCH_POINTS_WEIGHT_PERCENT + RELIABLE_BENCH_BONUS_PERCENT * reliability).round().astype(int)
 
 
 def _solve(model: cp_model.CpModel, bool_vars: list, n: int) -> list[int] | None:
