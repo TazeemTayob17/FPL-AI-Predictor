@@ -12,7 +12,6 @@ from fpl_agent.utils.settings import (
     save_mini_league_ids,
 )
 
-st.set_page_config(layout="wide")
 inject_fpl_css()
 st.title("Settings")
 

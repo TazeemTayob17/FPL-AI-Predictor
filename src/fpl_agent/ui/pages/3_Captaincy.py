@@ -9,7 +9,6 @@ from fpl_agent.utils.env import get_team_id
 
 DISPLAY_COLUMNS = ["web_name", "team_short", "position", "predicted_points"]
 
-st.set_page_config(layout="wide")
 inject_fpl_css()
 st.title("Captaincy")
 

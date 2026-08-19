@@ -43,7 +43,7 @@ def inject_fpl_css() -> None:
             color: white !important;
             padding: 1.1rem 1.5rem;
             border-radius: 14px;
-            margin-bottom: 1.5rem;
+            margin-bottom: 2.25rem;
             font-weight: 800;
             letter-spacing: -0.01em;
             box-shadow: 0 4px 16px rgba(55, 0, 60, 0.18);
@@ -59,6 +59,7 @@ def inject_fpl_css() -> None:
         }}
 
         p, span, div, label {{ color: {INK}; }}
+        h1, h1 * {{ color: white !important; }}
         [data-testid="stCaptionContainer"], .stCaption {{ color: {MUTED} !important; }}
 
         [data-testid="stMetric"] {{

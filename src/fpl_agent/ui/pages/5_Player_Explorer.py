@@ -13,7 +13,6 @@ from fpl_agent.utils.settings import SETTINGS_PATH
 
 TEMPLATE_OWNERSHIP_THRESHOLD = 10.0  # % owned at/above which a player counts as "template" rather than "differential"
 
-st.set_page_config(layout="wide")
 inject_fpl_css()
 st.title("Player Explorer")
 
