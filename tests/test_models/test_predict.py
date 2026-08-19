@@ -98,7 +98,7 @@ def test_predict_horizon_points_sums_the_trained_model_across_the_horizon_and_ze
         "teams": [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}],
     }
 
-    def fake_predict_points(players, bootstrap, player_histories=None, fixtures_current=None, teams_current=None, target_gameweek=None, registry_path=None):
+    def fake_predict_points(players, bootstrap, player_histories=None, fixtures_current=None, teams_current=None, target_gameweek=None, registry_path=None, historical_fixtures=None, historical_teams=None, previous_season_form=None):
         if target_gameweek == 10:
             return pd.DataFrame([{"player_id": 1, "predicted_points": 5.0, "fixture_count": 1}]), False
         return pd.DataFrame([{"player_id": 1, "predicted_points": 3.0, "fixture_count": 0}]), False

@@ -9,9 +9,10 @@ import lightgbm as lgb
 import pandas as pd
 import yaml
 
-from fpl_agent.features.build_features import build_current_features
+from fpl_agent.features.build_features import EXPECTED_ROLL_COLUMNS, build_current_features
 from fpl_agent.ingestion import fpl_api
 from fpl_agent.models.cold_start import build_opening_difficulty, predict_cold_start_points
+from fpl_agent.models.live_adjustments import apply_live_adjustments
 from fpl_agent.storage.repository import PROCESSED_DIR, infer_current_gameweek
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -60,6 +61,9 @@ def predict_points(
     teams_current: pd.DataFrame | None = None,
     target_gameweek: int | None = None,
     registry_path: Path = REGISTRY_PATH,
+    historical_fixtures: pd.DataFrame | None = None,
+    historical_teams: pd.DataFrame | None = None,
+    previous_season_form: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, bool]:
     with SETTINGS_PATH.open(encoding="utf-8") as f:
         threshold = yaml.safe_load(f)["model"]["cold_start_gw_threshold"]
@@ -75,7 +79,11 @@ def predict_points(
         raise ValueError("player_histories, fixtures_current, teams_current, and target_gameweek are required past cold-start.")
 
     models = load_position_models(registry_path)
-    features = build_current_features(player_histories, players, fixtures_current, teams_current, target_gameweek)
+    features = build_current_features(
+        player_histories, players, fixtures_current, teams_current, target_gameweek,
+        historical_fixtures=historical_fixtures, historical_teams=historical_teams,
+        previous_season_form=previous_season_form,
+    )
     return predict_with_trained_models(features, models), False
 
 
@@ -99,6 +107,26 @@ def load_fixtures_and_teams_current(bootstrap: dict) -> tuple[pd.DataFrame | Non
     return fixtures_current, teams_current
 
 
+# Loads every past season's fixtures/teams, so this season's team defensive/attacking form can carry over instead of starting blank.
+def load_historical_fixtures_and_teams() -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
+    fixtures_path = PROCESSED_DIR / "all_seasons_fixtures.parquet"
+    teams_path = PROCESSED_DIR / "all_seasons_teams.parquet"
+    if not fixtures_path.exists() or not teams_path.exists():
+        return None, None
+    return pd.read_parquet(fixtures_path), pd.read_parquet(teams_path)
+
+
+# Each current player's end-of-last-season rolling form, matched by full name - the fallback used until they've played their first game of the current season.
+def load_previous_season_form(players: pd.DataFrame, training_table_path: Path = PROCESSED_DIR / "training_table.parquet") -> pd.DataFrame:
+    if not training_table_path.exists():
+        return pd.DataFrame(columns=["player_id"])
+    table = pd.read_parquet(training_table_path, columns=["season", "GW", "name", *EXPECTED_ROLL_COLUMNS])
+    last_season = table["season"].max()
+    last_rows = table[table["season"] == last_season].sort_values("GW").groupby("name", as_index=False).tail(1)
+    matched = players[["player_id", "web_name_full"]].merge(last_rows, left_on="web_name_full", right_on="name", how="inner")
+    return matched[["player_id", *EXPECTED_ROLL_COLUMNS]]
+
+
 # Attaches `horizon_points`, summing the routed predictor's output across horizon_gws gameweeks.
 def predict_horizon_points(players: pd.DataFrame, bootstrap: dict, horizon_gws: int) -> tuple[pd.DataFrame, bool]:
     with SETTINGS_PATH.open(encoding="utf-8") as f:
@@ -110,6 +138,7 @@ def predict_horizon_points(players: pd.DataFrame, bootstrap: dict, horizon_gws: 
         predictions, used_cold_start = predict_points(players, bootstrap, fixtures_current=fixtures_current, teams_current=teams_current)
         predictions = predictions.copy()
         predictions["horizon_points"] = predictions["predicted_points"] * horizon_gws
+        predictions = apply_live_adjustments(predictions, players)
         return predictions, used_cold_start
 
     next_gw = infer_current_gameweek(bootstrap)
@@ -120,12 +149,16 @@ def predict_horizon_points(players: pd.DataFrame, bootstrap: dict, horizon_gws: 
     if fixtures_current is None or teams_current is None:
         raise ValueError("The trained-model path needs fixtures_current.parquet and bootstrap['teams'] - run the refresh first.")
     player_histories = fetch_player_histories(players)
+    historical_fixtures, historical_teams = load_historical_fixtures_and_teams()
+    previous_form = load_previous_season_form(players) if historical_fixtures is not None else None
 
     horizon_frames = []
     for gw in range(next_gw, next_gw + horizon_gws):
         gw_predictions, _used_cold_start = predict_points(
             players, bootstrap, player_histories=player_histories, fixtures_current=fixtures_current,
             teams_current=teams_current, target_gameweek=gw,
+            historical_fixtures=historical_fixtures, historical_teams=historical_teams,
+            previous_season_form=previous_form,
         )
         gw_predictions = gw_predictions.copy()
         gw_predictions.loc[gw_predictions["fixture_count"] == 0, "predicted_points"] = 0.0
@@ -137,4 +170,5 @@ def predict_horizon_points(players: pd.DataFrame, bootstrap: dict, horizon_gws: 
     predictions = players.merge(horizon_sum, on="player_id", how="left")
     predictions["horizon_points"] = predictions["horizon_points"].fillna(0.0)
     predictions["predicted_points"] = predictions["horizon_points"] / horizon_gws
+    predictions = apply_live_adjustments(predictions, players, current_gw=next_gw)
     return predictions, False

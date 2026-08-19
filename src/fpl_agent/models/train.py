@@ -18,7 +18,10 @@ POSITIONS = ("GKP", "DEF", "MID", "FWD")
 TARGET_COLUMN = "total_points"
 VALIDATION_SEASON = "2025-26"
 
-LGB_PARAMS = {"objective": "regression", "metric": "mae", "verbosity": -1, "num_leaves": 31, "learning_rate": 0.05, "min_data_in_leaf": 30}
+LGB_PARAMS = {
+    "objective": "regression", "metric": "mae", "verbosity": -1, "num_leaves": 15, "learning_rate": 0.05,
+    "min_data_in_leaf": 50, "lambda_l1": 0.5, "lambda_l2": 0.5, "feature_fraction": 0.8,
+}
 
 
 def feature_columns(table: pd.DataFrame) -> list[str]:
@@ -81,6 +84,8 @@ if __name__ == "__main__":
     fixtures = pd.read_parquet(PROJECT_ROOT / "data" / "processed" / "all_seasons_fixtures.parquet")
     teams = pd.read_parquet(PROJECT_ROOT / "data" / "processed" / "all_seasons_teams.parquet")
     training_table = build_training_table(gw_rows, fixtures, teams)
+    # Persisted so replay/backtest/ablation tooling and the live previous-season-form fallback always see the same features the models were just trained on.
+    training_table.to_parquet(PROJECT_ROOT / "data" / "processed" / "training_table.parquet")
 
     result = train_all_positions(training_table)
     for position, info in result.items():

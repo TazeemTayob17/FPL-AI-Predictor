@@ -20,6 +20,7 @@ PLAYER_COLUMNS = [
     "now_cost_million", "form", "total_points", "selected_by_percent",
     "status", "news", "chance_of_playing_this_round", "chance_of_playing_next_round",
     "transfers_in_event", "transfers_out_event", "cost_change_event",
+    "penalties_order", "corners_and_indirect_freekicks_order", "direct_freekicks_order",
 ]
 
 

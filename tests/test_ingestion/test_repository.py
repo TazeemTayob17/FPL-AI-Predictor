@@ -13,6 +13,7 @@ SAMPLE_BOOTSTRAP = {
             "selected_by_percent": "45.3", "status": "a", "news": "",
             "chance_of_playing_this_round": None, "chance_of_playing_next_round": None,
             "transfers_in_event": 1000, "transfers_out_event": 200, "cost_change_event": 1,
+            "penalties_order": 1, "corners_and_indirect_freekicks_order": None, "direct_freekicks_order": None,
         },
     ],
     "teams": [{"id": 1, "name": "Man City", "short_name": "MCI"}],

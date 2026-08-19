@@ -3,6 +3,7 @@
 import pandas as pd
 
 from fpl_agent.features.build_features import EXPECTED_ROLL_COLUMNS, build_current_features, collapse_to_gameweek
+from fpl_agent.features.team_strength import ROLL_COLUMNS as TEAM_STRENGTH_ROLL_COLUMNS
 
 DOUBLE_GAMEWEEK_ROWS = pd.DataFrame(
     {
@@ -111,3 +112,62 @@ def test_build_current_features_missing_columns_are_numeric_dtype_not_object():
     result = build_current_features({1: pd.DataFrame()}, players, FIXTURES_CURRENT, TEAMS_CURRENT, target_gameweek=1)
     for column in [*EXPECTED_ROLL_COLUMNS, "selected"]:
         assert result[column].dtype.kind in "fc", f"{column} has non-numeric dtype {result[column].dtype}"
+
+
+TEAMS_CURRENT_WITH_CODE = pd.DataFrame(
+    {
+        "id": [1, 2], "code": [100, 200],
+        "strength_attack_home": [1000, 1000], "strength_attack_away": [1000, 1000],
+        "strength_defence_home": [1000, 1000], "strength_defence_away": [1000, 1000],
+    }
+)
+HISTORICAL_FIXTURES = pd.DataFrame(
+    {
+        "season": ["2025-26", "2025-26"], "event": [37, 38], "team_h": [1, 1], "team_a": [2, 2],
+        "team_h_score": [5, 0], "team_a_score": [1, 3], "finished": [True, True],
+    }
+)
+HISTORICAL_TEAMS = pd.DataFrame({"season": ["2025-26", "2025-26"], "id": [1, 2], "code": [100, 200]})
+
+
+# When historical fixtures/teams are supplied, a team's real last-season defensive form carries into GW1 instead of starting blank.
+def test_build_current_features_carries_team_strength_from_last_season():
+    players = pd.DataFrame([{"player_id": 1, "team_id": 1, "position": "FWD", "now_cost_million": 8.0}])
+    result = build_current_features(
+        {1: pd.DataFrame()}, players, FIXTURES_CURRENT, TEAMS_CURRENT_WITH_CODE, target_gameweek=1,
+        historical_fixtures=HISTORICAL_FIXTURES, historical_teams=HISTORICAL_TEAMS,
+    )
+    assert result.loc[0, "team_goals_conceded_roll3"] == 1
+
+
+# Without historical data, team-strength columns still exist (as NaN) instead of being missing entirely and crashing the trained model's column lookup.
+def test_build_current_features_team_strength_columns_are_nan_without_historical_data():
+    players = pd.DataFrame([{"player_id": 1, "team_id": 1, "position": "FWD", "now_cost_million": 8.0}])
+    result = build_current_features({1: pd.DataFrame()}, players, FIXTURES_CURRENT, TEAMS_CURRENT, target_gameweek=1)
+    for column in TEAM_STRENGTH_ROLL_COLUMNS:
+        assert column in result.columns
+        assert pd.isna(result.loc[0, column])
+
+
+PREVIOUS_SEASON_FORM = pd.DataFrame([{"player_id": 1, **{col: 5.0 for col in EXPECTED_ROLL_COLUMNS}}])
+
+
+# A player with no current-season history yet gets last season's rolling form as a GW1 starting point, not blank NaN.
+def test_build_current_features_uses_previous_season_form_when_no_current_history():
+    players = pd.DataFrame([{"player_id": 1, "team_id": 1, "position": "FWD", "now_cost_million": 8.0}])
+    result = build_current_features(
+        {1: pd.DataFrame()}, players, FIXTURES_CURRENT, TEAMS_CURRENT, target_gameweek=1,
+        previous_season_form=PREVIOUS_SEASON_FORM,
+    )
+    assert result.loc[0, "total_points_roll3"] == 5.0
+
+
+# Once a player has a real current-season game, the real (if still sparse) rolling pipeline is used instead of the previous-season fallback.
+def test_build_current_features_prefers_real_current_history_over_previous_season_fallback():
+    players = pd.DataFrame([{"player_id": 1, "team_id": 1, "position": "FWD", "now_cost_million": 8.0}])
+    history = pd.DataFrame({"GW": [1], "total_points": [9], "minutes": [90]})
+    result = build_current_features(
+        {1: history}, players, FIXTURES_CURRENT, TEAMS_CURRENT, target_gameweek=1,
+        previous_season_form=PREVIOUS_SEASON_FORM,
+    )
+    assert pd.isna(result.loc[0, "total_points_roll3"])
