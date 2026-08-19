@@ -11,7 +11,7 @@ from fpl_agent.models.train import POSITIONS, TARGET_COLUMN, feature_columns, tr
 from fpl_agent.optimizer.captaincy import choose_captaincy
 from fpl_agent.optimizer.constraints import SquadRules
 from fpl_agent.optimizer.season_planner import classify_core_vs_rotational
-from fpl_agent.optimizer.squad_optimizer import select_squad, select_starting_xi
+from fpl_agent.optimizer.squad_optimizer import select_squad, select_squad_and_starting_xi, select_starting_xi
 from fpl_agent.optimizer.transfer_optimizer import recommend_transfers
 from fpl_agent.storage.repository import PROCESSED_DIR
 
@@ -186,7 +186,7 @@ def simulate_season_transfers(
     pool = target_season_player_pool(table, target_season, first_gw)
     candidates = pool.merge(first_points[["web_name", "horizon_points"]], on="web_name", how="inner")
     candidates = candidates.rename(columns={"horizon_points": "predicted_points"})
-    squad = select_squad(candidates, rules)
+    squad, _initial_xi, _initial_bench = select_squad_and_starting_xi(candidates, rules)
     squad["player_id"] = squad["web_name"]
     pool["player_id"] = pool["web_name"]
     squad = squad[SQUAD_COLUMNS]

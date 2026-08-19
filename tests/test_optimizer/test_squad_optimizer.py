@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 from fpl_agent.optimizer.constraints import SquadRules
-from fpl_agent.optimizer.squad_optimizer import InfeasibleSquadError, select_squad, select_starting_xi
+from fpl_agent.optimizer.squad_optimizer import InfeasibleSquadError, select_squad, select_squad_and_starting_xi, select_starting_xi
 
 SMALL_RULES = SquadRules(
     budget_million=34.0,
@@ -119,3 +119,42 @@ def test_select_starting_xi_infeasible_when_formation_cannot_be_met():
     strict_rules = SquadRules(**{**XI_RULES.__dict__, "starting_xi_size": 5, "formation_min": {"GKP": 1, "DEF": 3, "MID": 1, "FWD": 1}})
     with pytest.raises(InfeasibleSquadError):
         select_starting_xi(thin_defense, strict_rules)
+
+
+JOINT_RULES = SquadRules(
+    budget_million=15.0, squad_size=3,
+    squad_composition={"GKP": 2, "MID": 1},
+    starting_xi_size=2,
+    formation_min={"GKP": 1, "DEF": 0, "MID": 1, "FWD": 0},
+    max_players_per_club=3, captain_multiplier=2, triple_captain_multiplier=3,
+)
+
+JOINT_POOL = pd.DataFrame(
+    [
+        _player("gk_starter", "C1", "GKP", 6, 30),
+        _player("gk_backup_cheap", "C2", "GKP", 3, 12),
+        _player("gk_backup_expensive", "C3", "GKP", 5, 20),
+        _player("mid_basic", "C4", "MID", 4, 20),
+        _player("mid_great", "C5", "MID", 6, 26),
+    ]
+)
+
+
+# Plain select_squad only sees raw point totals, so a pricier backup GK (which will never start) can outbid a better starting MID for budget.
+def test_select_squad_alone_overspends_on_a_bench_only_player():
+    squad = select_squad(JOINT_POOL, JOINT_RULES)
+    assert sorted(squad["web_name"]) == ["gk_backup_expensive", "gk_starter", "mid_basic"]
+
+
+# select_squad_and_starting_xi weights bench points down, so it should instead spend that budget on the starting MID and settle for a cheap bench GK.
+def test_select_squad_and_starting_xi_prefers_a_cheap_bench_over_a_pricier_one():
+    squad, starting_xi, bench = select_squad_and_starting_xi(JOINT_POOL, JOINT_RULES)
+    assert sorted(squad["web_name"]) == ["gk_backup_cheap", "gk_starter", "mid_great"]
+    assert set(starting_xi["web_name"]) == {"gk_starter", "mid_great"}
+    assert set(bench["web_name"]) == {"gk_backup_cheap"}
+
+
+def test_select_squad_and_starting_xi_raises_when_infeasible():
+    tiny_budget_rules = SquadRules(**{**JOINT_RULES.__dict__, "budget_million": 5.0})
+    with pytest.raises(InfeasibleSquadError):
+        select_squad_and_starting_xi(JOINT_POOL, tiny_budget_rules)

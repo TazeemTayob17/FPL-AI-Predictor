@@ -8,7 +8,7 @@ from fpl_agent.ingestion.cache import load_latest_json
 from fpl_agent.models.predict import predict_horizon_points
 from fpl_agent.optimizer.captaincy import choose_captaincy
 from fpl_agent.optimizer.constraints import load_rules
-from fpl_agent.optimizer.squad_optimizer import select_squad, select_starting_xi
+from fpl_agent.optimizer.squad_optimizer import select_squad_and_starting_xi
 from fpl_agent.storage.repository import PROCESSED_DIR
 
 INITIAL_SQUAD_HORIZON_GWS = 1  # a single-GW-equivalent estimate, matching this entrypoint's original semantics
@@ -24,8 +24,7 @@ def build_initial_squad() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.
         )
     players = pd.read_parquet(players_path)
     all_players, used_cold_start = predict_horizon_points(players, bootstrap, horizon_gws=INITIAL_SQUAD_HORIZON_GWS)
-    squad = select_squad(all_players)
-    starting_xi, bench = select_starting_xi(squad)
+    squad, starting_xi, bench = select_squad_and_starting_xi(all_players)
     return squad, starting_xi, bench, all_players, used_cold_start
 
 
