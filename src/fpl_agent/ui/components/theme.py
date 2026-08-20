@@ -34,14 +34,13 @@ def inject_fpl_css() -> None:
         .stApp {{ background: {SURFACE}; }}
         .stApp header {{ background: transparent; }}
 
-        [data-testid="collapsedControl"] {{
-            background: {PURPLE};
-            border-radius: 10px;
-            box-shadow: 0 2px 8px rgba(55, 0, 60, 0.35);
-            top: 0.6rem;
-            left: 0.6rem;
+        [data-testid="stExpandSidebarButton"] {{
+            background: {PURPLE} !important;
+            border-radius: 10px !important;
+            box-shadow: 0 2px 8px rgba(55, 0, 60, 0.35) !important;
+            color: white !important;
         }}
-        [data-testid="collapsedControl"] svg {{ fill: white; }}
+        [data-testid="stExpandSidebarButton"] svg {{ fill: white !important; }}
 
         .block-container {{
             max-width: 1180px;
