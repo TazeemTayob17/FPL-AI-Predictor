@@ -1,0 +1,7 @@
+# These are structured/binary formats where line-ending conversion corrupts the content (LightGBM's .txt model
+# format is line-sensitive and breaks on CRLF - this caused a real "Model format error" crash after checkout).
+# Never let core.autocrlf touch them, regardless of the cloning machine's git config.
+models/artifacts/*.txt -text
+*.parquet binary
+*.pkl binary
+*.db binary
