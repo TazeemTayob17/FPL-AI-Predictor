@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 
 from fpl_agent.features.rolling_stats import WINDOWS, add_minutes_volatility
+from fpl_agent.models.component_models import train_all_component_models
+from fpl_agent.models.decomposed_predict import predict_decomposed_points
 from fpl_agent.models.naive_predictor import previous_season_label
 from fpl_agent.models.train import POSITIONS, TARGET_COLUMN, feature_columns, train_position_model
 from fpl_agent.optimizer.captaincy import choose_captaincy
@@ -40,8 +42,8 @@ def naive_prior_points(target_season: str) -> pd.DataFrame:
     return prior[["name", "naive_prediction"]]
 
 
-# For each evaluated gameweek, retrains on strictly-prior data only and predicts that gameweek's actual points.
-def walk_forward_backtest(table: pd.DataFrame, target_season: str, min_gw: int = MIN_EVAL_GW) -> pd.DataFrame:
+# For each evaluated gameweek, retrains on strictly-prior data only and predicts that gameweek's actual points - both the current single-target model and the decomposed model, so they're directly comparable fold-for-fold.
+def walk_forward_backtest(table: pd.DataFrame, target_season: str, min_gw: int = MIN_EVAL_GW, include_decomposed: bool = True) -> pd.DataFrame:
     columns = feature_columns(table)
     naive = naive_prior_points(target_season)
     target_gws = sorted(g for g in table.loc[table["season"] == target_season, "GW"].unique() if g >= min_gw)
@@ -58,6 +60,7 @@ def walk_forward_backtest(table: pd.DataFrame, target_season: str, min_gw: int =
             continue
 
         eval_rows["model_prediction"] = np.nan
+        eval_rows["decomposed_prediction"] = np.nan
         for position in POSITIONS:
             pos_train_all = train_rows[train_rows["position"] == position].dropna(subset=[TARGET_COLUMN])
             pos_eval_mask = eval_rows["position"] == position
@@ -67,6 +70,12 @@ def walk_forward_backtest(table: pd.DataFrame, target_season: str, min_gw: int =
             model, _ = train_position_model(pos_train, pos_valid, columns)
             eval_rows.loc[pos_eval_mask, "model_prediction"] = model.predict(eval_rows.loc[pos_eval_mask, columns])
 
+            if include_decomposed:
+                decomposed_models = train_all_component_models(pos_train, pos_valid, columns)
+                if position in decomposed_models:
+                    decomposed = predict_decomposed_points(eval_rows.loc[pos_eval_mask], {position: decomposed_models[position]}, columns)
+                    eval_rows.loc[pos_eval_mask, "decomposed_prediction"] = decomposed["predicted_points"].values
+
         eval_rows = eval_rows.merge(naive, on="name", how="left")
         eval_rows["naive_prediction"] = eval_rows["naive_prediction"].fillna(0)
         folds.append(eval_rows)
@@ -74,11 +83,18 @@ def walk_forward_backtest(table: pd.DataFrame, target_season: str, min_gw: int =
     return pd.concat(folds, ignore_index=True)
 
 
-# Computes MAE, RMSE, and mean per-gameweek Spearman rank correlation for the model vs the naive baseline.
-def accuracy_report(predictions: pd.DataFrame) -> dict:
+ACCURACY_REPORT_COLUMNS = (("model", "model_prediction"), ("decomposed", "decomposed_prediction"), ("naive", "naive_prediction"))
+
+
+# Computes MAE, RMSE, and mean per-gameweek Spearman rank correlation for each prediction column present vs the naive baseline - by default the current model, the decomposed model, and naive, so all three are directly comparable.
+def accuracy_report(predictions: pd.DataFrame, columns: tuple[tuple[str, str], ...] = ACCURACY_REPORT_COLUMNS) -> dict:
     report = {}
-    for label, column in (("model", "model_prediction"), ("naive", "naive_prediction")):
+    for label, column in columns:
+        if column not in predictions.columns:
+            continue
         valid = predictions.dropna(subset=[column, "total_points"])
+        if valid.empty:
+            continue
         errors = valid[column] - valid["total_points"]
         rank_corrs = [
             g[column].corr(g["total_points"], method="spearman") for _, g in valid.groupby("GW") if len(g) > 2
@@ -89,6 +105,11 @@ def accuracy_report(predictions: pd.DataFrame) -> dict:
             "mean_rank_correlation": float(np.nanmean(rank_corrs)),
         }
     return report
+
+
+# Same as accuracy_report, but broken out per position - decomposition should matter most for GKP/DEF (clean-sheet driven) and least for FWD, so a pooled number alone would hide that.
+def accuracy_report_by_position(predictions: pd.DataFrame, columns: tuple[tuple[str, str], ...] = ACCURACY_REPORT_COLUMNS) -> dict:
+    return {position: accuracy_report(predictions[predictions["position"] == position], columns) for position in POSITIONS}
 
 
 # Builds the static player pool (name, position, team, cost) as it stood at the season's first evaluated gameweek.

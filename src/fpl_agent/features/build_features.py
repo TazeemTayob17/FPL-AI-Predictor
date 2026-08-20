@@ -8,6 +8,8 @@ from fpl_agent.features.fixtures_features import team_fixture_difficulty
 from fpl_agent.features.rolling_stats import ROLLING_STAT_COLUMNS, WINDOWS, add_rolling_features
 from fpl_agent.features.team_strength import ROLL_COLUMNS as TEAM_STRENGTH_ROLL_COLUMNS
 from fpl_agent.features.team_strength import build_team_strength_table, latest_team_strength
+from fpl_agent.features.team_xg_strength import ROLL_COLUMNS as TEAM_XG_STRENGTH_ROLL_COLUMNS
+from fpl_agent.features.team_xg_strength import build_team_xg_strength_table
 
 ADDITIVE_GW_STATS = (
     "total_points", "minutes", "goals_scored", "assists", "clean_sheets", "goals_conceded",
@@ -34,8 +36,11 @@ def collapse_to_gameweek(gw_rows: pd.DataFrame) -> pd.DataFrame:
     return collapsed
 
 
-# One row per team per gameweek: mean fixture difficulty, opponent strength, DGW fixture count, and (if given) that team's own rolling defensive/attacking form.
-def team_gameweek_context(fixtures: pd.DataFrame, teams: pd.DataFrame, team_strength: pd.DataFrame | None = None) -> pd.DataFrame:
+# One row per team per gameweek: mean fixture difficulty, opponent strength, DGW fixture count, and (if given) that team's own rolling defensive/attacking form (actual-goals-based and/or xG-based).
+def team_gameweek_context(
+    fixtures: pd.DataFrame, teams: pd.DataFrame,
+    team_strength: pd.DataFrame | None = None, team_xg_strength: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     difficulty = team_fixture_difficulty(fixtures, teams)
     context = difficulty.groupby(["event", "team"], as_index=False).agg(
         difficulty=("difficulty", "mean"),
@@ -46,12 +51,15 @@ def team_gameweek_context(fixtures: pd.DataFrame, teams: pd.DataFrame, team_stre
     context = context.rename(columns={"team": "team_id", "event": "GW"})
     if team_strength is not None:
         context = context.merge(team_strength, on=["team_id", "GW"], how="left")
+    if team_xg_strength is not None:
+        context = context.merge(team_xg_strength, on=["team_id", "GW"], how="left")
     return context
 
 
 # Builds one model-ready row per player per gameweek per season, with rolling features and fixture context.
 def build_training_table(gw_rows: pd.DataFrame, fixtures: pd.DataFrame, teams: pd.DataFrame) -> pd.DataFrame:
     team_strength_table = build_team_strength_table(fixtures, teams)
+    team_xg_strength_table = build_team_xg_strength_table(gw_rows, fixtures, teams)
     frames = []
     for season in sorted(gw_rows["season"].unique()):
         season_gw = collapse_to_gameweek(gw_rows[gw_rows["season"] == season])
@@ -66,7 +74,14 @@ def build_training_table(gw_rows: pd.DataFrame, fixtures: pd.DataFrame, teams: p
             .merge(season_teams[["code", "id"]], on="code", how="left")
             .rename(columns={"id": "team_id"})[["team_id", "GW", *TEAM_STRENGTH_ROLL_COLUMNS]]
         )
-        context = team_gameweek_context(fixtures[fixtures["season"] == season], season_teams, season_team_strength)
+        season_team_xg_strength = None
+        if not team_xg_strength_table.empty:
+            season_team_xg_strength = (
+                team_xg_strength_table[team_xg_strength_table["season"] == season]
+                .merge(season_teams[["code", "id"]], on="code", how="left")
+                .rename(columns={"id": "team_id"})[["team_id", "GW", *TEAM_XG_STRENGTH_ROLL_COLUMNS]]
+            )
+        context = team_gameweek_context(fixtures[fixtures["season"] == season], season_teams, season_team_strength, season_team_xg_strength)
         season_gw = season_gw.merge(context, on=["GW", "team_id"], how="left")
         frames.append(season_gw)
     return pd.concat(frames, ignore_index=True)

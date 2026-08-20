@@ -10,6 +10,7 @@ ROLLING_STAT_COLUMNS = (
     "total_points", "minutes", "goals_scored", "assists", "bps", "clean_sheets", "saves",
     "expected_goals", "expected_assists", "expected_goal_involvements", "expected_goals_conceded",
     "defensive_contribution", "influence", "creativity", "threat", "ict_index",
+    "own_goals", "penalties_missed", "penalties_saved", "yellow_cards", "red_cards",
 )
 
 
