@@ -57,14 +57,19 @@ def active_overrides_for_gameweek(current_gw: int | None, db_path: Path = DEFAUL
     return overrides[applies]
 
 
-def apply_overrides(player_status: pd.DataFrame, current_gw: int | None = None, db_path: Path = DEFAULT_DB_PATH) -> pd.DataFrame:
-    """Layers active manual overrides onto automated player_status, badging affected rows as manual."""
+def apply_overrides(
+    player_status: pd.DataFrame, current_gw: int | None = None, db_path: Path = DEFAULT_DB_PATH,
+    session_overrides: dict[int, dict] | None = None,
+) -> pd.DataFrame:
+    """Layers active manual overrides onto automated player_status, badging affected rows as manual.
+
+    session_overrides (if given) are a visitor's own personal corrections {player_id: {field: value}} -
+    applied last, so they win over the shared table for that visitor's view without ever being written
+    to it or affecting any other visitor.
+    """
     result = player_status.copy()
     result["is_manual_override"] = False
     overrides = active_overrides_for_gameweek(current_gw, db_path=db_path)
-    if overrides.empty:
-        return result
-
     for row in overrides.itertuples():
         mask = result["player_id"] == row.player_id
         if not mask.any():
@@ -72,4 +77,13 @@ def apply_overrides(player_status: pd.DataFrame, current_gw: int | None = None, 
         value = int(row.value) if row.field in NUMERIC_OVERRIDE_FIELDS else row.value
         result.loc[mask, row.field] = value
         result.loc[mask, "is_manual_override"] = True
+
+    for player_id, fields in (session_overrides or {}).items():
+        mask = result["player_id"] == player_id
+        if not mask.any():
+            continue
+        for field, value in fields.items():
+            value = int(value) if field in NUMERIC_OVERRIDE_FIELDS else value
+            result.loc[mask, field] = value
+            result.loc[mask, "is_manual_override"] = True
     return result

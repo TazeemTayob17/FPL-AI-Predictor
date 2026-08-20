@@ -24,6 +24,7 @@ data/db/*.db
 !data/processed/training_table.parquet
 !data/processed/players_current.parquet
 !data/processed/fixtures_current.parquet
+!data/processed/shared_predictions.pkl
 
 models/artifacts/**
 !models/artifacts/.gitkeep

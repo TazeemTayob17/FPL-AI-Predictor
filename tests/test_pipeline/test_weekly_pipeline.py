@@ -177,6 +177,73 @@ def test_run_live_logs_a_failed_run_and_reraises_on_error(monkeypatch):
     assert logged == {"run_id": 7, "status": "failed"}
 
 
+# refresh_shared_predictions must bundle everything the per-visitor step needs, without depending on any one team.
+def test_refresh_shared_predictions_returns_the_expected_shared_bundle(monkeypatch):
+    monkeypatch.setattr(weekly_pipeline, "_load_horizon_gws", lambda: 5)
+    monkeypatch.setattr(weekly_pipeline, "refresh_and_enrich_news", lambda: (PLAYERS, BOOTSTRAP_PRE_SEASON))
+    monkeypatch.setattr(weekly_pipeline, "predict_horizon_points", lambda players, bootstrap, horizon_gws: (PREDICTIONS.copy(), True))
+    monkeypatch.setattr(weekly_pipeline, "load_fixtures_and_teams_current", lambda bootstrap: ("fixtures", "teams"))
+
+    shared = weekly_pipeline.refresh_shared_predictions()
+
+    assert shared["used_cold_start"] is True
+    assert shared["horizon_gws"] == 5
+    assert shared["fixtures_current"] == "fixtures"
+    assert shared["teams_current"] == "teams"
+    assert list(shared["predictions"]["web_name"]) == list(PREDICTIONS["web_name"])
+
+
+SHARED = {
+    "predictions": PREDICTIONS, "used_cold_start": False, "fixtures_current": None, "teams_current": None, "horizon_gws": 5,
+}
+
+
+# Pre-deadline (sync_team returns None), build_visitor_recommendation must fall back to the initial-squad recommendation, exactly like run_live.
+def test_build_visitor_recommendation_returns_initial_squad_when_no_live_squad_yet(monkeypatch):
+    squad = pd.DataFrame([{"web_name": "p1"}])
+    all_players = pd.DataFrame([{"web_name": "p1"}, {"web_name": "p2"}])
+    monkeypatch.setattr(weekly_pipeline, "sync_team", lambda team_id: None)
+    monkeypatch.setattr(weekly_pipeline, "build_initial_squad", lambda: (squad, squad, squad, all_players, True))
+
+    result = weekly_pipeline.build_visitor_recommendation(123, SHARED)
+    assert result["mode"] == "initial_squad"
+    assert result["squad"] is squad
+
+
+# With a live squad synced, build_visitor_recommendation must produce the same shape of live recommendation run_live does, but from the already-computed shared predictions (no predict_horizon_points call).
+def test_build_visitor_recommendation_builds_a_live_recommendation_from_shared_predictions(monkeypatch):
+    monkeypatch.setattr(weekly_pipeline, "sync_team", lambda team_id: SNAPSHOT)
+    monkeypatch.setattr(weekly_pipeline, "load_rules", lambda: RULES)
+    captured = {}
+
+    def fake_plan(*args, **kwargs):
+        captured["mini_league_ids"] = kwargs.get("mini_league_ids")
+        return FAKE_PLAN, FAKE_CHIP_SUGGESTIONS
+
+    monkeypatch.setattr(weekly_pipeline, "_build_season_plan_and_chip_suggestions", fake_plan)
+
+    result = weekly_pipeline.build_visitor_recommendation(123, SHARED, mini_league_ids=[9999])
+
+    assert result["mode"] == "live"
+    assert result["recommendation"]["bought"]["web_name"].iloc[0] == "fwd_great"
+    assert result["captain"]["web_name"] == "fwd_great"
+    assert captured["mini_league_ids"] == [9999]  # this visitor's own league IDs reached the season plan, not settings.yaml's
+
+
+# A visitor's session override must actually change the predictions their recommendation is built from - the whole point of it being per-visitor.
+def test_build_visitor_recommendation_applies_this_visitors_session_overrides(monkeypatch):
+    monkeypatch.setattr(weekly_pipeline, "sync_team", lambda team_id: SNAPSHOT)
+    monkeypatch.setattr(weekly_pipeline, "load_rules", lambda: RULES)
+    monkeypatch.setattr(weekly_pipeline, "_build_season_plan_and_chip_suggestions", lambda *a, **k: (FAKE_PLAN, FAKE_CHIP_SUGGESTIONS))
+
+    doubted = weekly_pipeline.build_visitor_recommendation(123, SHARED, session_overrides={5: {"chance_of_playing_next_round": "0"}})
+    # fwd_great (player_id 5) is ruled out by this visitor's own doubt, so its points collapse to 0 in their view only.
+    assert doubted["all_players"].loc[doubted["all_players"]["player_id"] == 5, "horizon_points"].iloc[0] == 0.0
+
+    baseline = weekly_pipeline.build_visitor_recommendation(123, SHARED)
+    assert baseline["all_players"].loc[baseline["all_players"]["player_id"] == 5, "horizon_points"].iloc[0] == 40.0
+
+
 # _start_run/_finish_run must write a real, queryable run_history row - this is the table Phase 0 created but nothing wrote to.
 def test_start_and_finish_run_round_trip_through_run_history(tmp_path):
     db_path = tmp_path / "test.db"

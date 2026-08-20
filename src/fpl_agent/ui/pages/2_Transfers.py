@@ -2,21 +2,15 @@
 
 import streamlit as st
 
-from fpl_agent.ui.components.staleness import render_staleness_and_refresh
 from fpl_agent.ui.components.theme import inject_fpl_css
-from fpl_agent.utils.env import get_team_id
+from fpl_agent.ui.components.visitor import render_visitor_recommendation
 
 DISPLAY_COLUMNS = ["web_name", "team_short", "position", "now_cost_million", "horizon_points"]
 
 inject_fpl_css()
 st.title("Transfers")
 
-try:
-    team_id = get_team_id()
-except RuntimeError:
-    team_id = None
-
-result = render_staleness_and_refresh(team_id)
+result = render_visitor_recommendation()
 
 if result is None:
     st.info("No recommendation cached yet - go to the home page and click Refresh now.")

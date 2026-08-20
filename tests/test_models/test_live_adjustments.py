@@ -2,7 +2,7 @@
 
 import pandas as pd
 
-from fpl_agent.models.live_adjustments import apply_availability_scaling, apply_set_piece_boost
+from fpl_agent.models.live_adjustments import apply_availability_scaling, apply_session_overrides, apply_set_piece_boost
 
 PREDICTIONS = pd.DataFrame(
     [
@@ -71,3 +71,15 @@ def test_apply_set_piece_boost_is_a_no_op_when_order_columns_are_absent():
     predictions = pd.DataFrame([{"player_id": 1, "predicted_points": 10.0}])
     result = apply_set_piece_boost(predictions, players)
     assert result.loc[0, "predicted_points"] == 10.0
+
+
+# One visitor's personal correction must scale only that player, exactly like the shared-table version, and no session_overrides at all must be a pure no-op.
+def test_apply_session_overrides_scales_only_the_overridden_player():
+    result = apply_session_overrides(PREDICTIONS, {2: {"chance_of_playing_next_round": "50"}})
+    assert result.loc[result["player_id"] == 2, "predicted_points"].iloc[0] == 3.0
+    assert result.loc[result["player_id"] == 1, "predicted_points"].iloc[0] == 6.0
+
+
+def test_apply_session_overrides_is_a_no_op_with_no_overrides():
+    result = apply_session_overrides(PREDICTIONS, {})
+    pd.testing.assert_frame_equal(result, PREDICTIONS)

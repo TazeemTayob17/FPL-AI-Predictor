@@ -6,9 +6,9 @@ import yaml
 
 from fpl_agent.overrides.manager import apply_overrides
 from fpl_agent.storage.db import get_connection
-from fpl_agent.ui.components.staleness import render_staleness_and_refresh
+from fpl_agent.ui.components.session import get_session_differential_aggressiveness, get_session_overrides
 from fpl_agent.ui.components.theme import inject_fpl_css
-from fpl_agent.utils.env import get_team_id
+from fpl_agent.ui.components.visitor import render_visitor_recommendation
 from fpl_agent.utils.settings import SETTINGS_PATH
 
 TEMPLATE_OWNERSHIP_THRESHOLD = 10.0  # % owned at/above which a player counts as "template" rather than "differential"
@@ -16,15 +16,10 @@ TEMPLATE_OWNERSHIP_THRESHOLD = 10.0  # % owned at/above which a player counts as
 inject_fpl_css()
 st.title("Player Explorer")
 
-try:
-    team_id = get_team_id()
-except RuntimeError:
-    team_id = None
-
-result = render_staleness_and_refresh(team_id)
+result = render_visitor_recommendation()
 
 if result is None or "all_players" not in result:
-    st.info("No recommendation cached yet - click Refresh now above to compute predictions for the full player pool.")
+    st.info("No recommendation cached yet - the app owner needs to run a refresh, or you may still need to enter your team ID above.")
 else:
     predictions = result["all_players"]
 
@@ -34,14 +29,14 @@ else:
         st.info(f"Using pre-season priors (switches to the trained model after GW {threshold}).")
     else:
         st.success("Using the trained prediction model.")
-    st.caption(f"Differential aggressiveness: {settings['strategy']['differential_aggressiveness']} (change in Settings).")
+    st.caption(f"Differential aggressiveness: {get_session_differential_aggressiveness()} (change in Settings).")
 
     conn = get_connection()
     try:
         player_status = pd.read_sql_query("SELECT * FROM player_status", conn)
     finally:
         conn.close()
-    effective_status = apply_overrides(player_status)
+    effective_status = apply_overrides(player_status, session_overrides=get_session_overrides())
 
     stale_status_cols = [c for c in ("status", "news", "chance_of_playing_this_round", "chance_of_playing_next_round") if c in predictions.columns]
     display = predictions.drop(columns=stale_status_cols).merge(

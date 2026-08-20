@@ -19,6 +19,7 @@ from fpl_agent.models.evaluate import (
     target_season_player_pool,
     train_as_of,
 )
+from fpl_agent.models.live_adjustments import apply_session_overrides
 from fpl_agent.models.predict import SETTINGS_PATH, load_fixtures_and_teams_current, predict_horizon_points
 from fpl_agent.models.train import feature_columns
 from fpl_agent.optimizer import chip_strategy, season_planner
@@ -90,10 +91,14 @@ def refresh_and_enrich_news() -> tuple[pd.DataFrame, dict]:
     return players, bootstrap
 
 
-# Fetches standings for the first configured mini_league_id, or (None, None) if none are configured.
-def _load_mini_league_standings(settings_path: Path = SETTINGS_PATH) -> tuple[pd.DataFrame | None, int | None]:
-    with settings_path.open(encoding="utf-8") as f:
-        league_ids = yaml.safe_load(f)["team"].get("mini_league_ids") or []
+# Fetches standings for the first configured mini_league_id, or (None, None) if none are configured. mini_league_ids overrides the shared settings.yaml value - used to pass a visitor's own session-scoped league IDs in the multi-user path.
+def _load_mini_league_standings(
+    mini_league_ids: list[int] | None = None, settings_path: Path = SETTINGS_PATH
+) -> tuple[pd.DataFrame | None, int | None]:
+    league_ids = mini_league_ids
+    if league_ids is None:
+        with settings_path.open(encoding="utf-8") as f:
+            league_ids = yaml.safe_load(f)["team"].get("mini_league_ids") or []
     if not league_ids:
         return None, None
     league_id = int(league_ids[0])
@@ -105,14 +110,14 @@ def _load_mini_league_standings(settings_path: Path = SETTINGS_PATH) -> tuple[pd
     return repository.normalize_league_standings(raw, league_id), league_id
 
 
-# Builds the season plan and, from it, a rule-aware chip suggestion report - shared by run_live and run_replay.
+# Builds the season plan and, from it, a rule-aware chip suggestion report - shared by run_live and run_replay. mini_league_ids overrides the shared settings.yaml value (see _load_mini_league_standings).
 def _build_season_plan_and_chip_suggestions(
     squad: pd.DataFrame, fixtures: pd.DataFrame, teams: pd.DataFrame, current_gw: int, team_id: int | None,
-    chips_used: list[dict],
+    chips_used: list[dict], mini_league_ids: list[int] | None = None,
 ) -> tuple[season_planner.SeasonPlan, dict]:
     gw_range = range(current_gw, min(current_gw + SEASON_PLAN_LOOKAHEAD_GWS, LAST_GAMEWEEK_OF_SEASON + 1))
     context = team_gameweek_context(fixtures, teams)
-    standings, _league_id = (_load_mini_league_standings() if team_id is not None else (None, None))
+    standings, _league_id = (_load_mini_league_standings(mini_league_ids) if team_id is not None else (None, None))
 
     plan = season_planner.build_season_plan(
         squad, context, context, gw_range, standings=standings, team_id=team_id,
@@ -123,6 +128,70 @@ def _build_season_plan_and_chip_suggestions(
         gw_range, plan.chip_window_scores, plan.wildcard_signal, chips_used, current_gw, chip_config["first_half_deadline_gw"]
     )
     return plan, suggestions
+
+
+# The shared, expensive half of a live run: refresh + news enrichment + the full player-pool prediction, independent of any one visitor's team. Meant to be run once (locally, by the app owner) and cached for every visitor to read - see pipeline/recommendation_cache.py's shared-cache functions.
+def refresh_shared_predictions(horizon_gws: int | None = None) -> dict:
+    horizon_gws = horizon_gws or _load_horizon_gws()
+    players, bootstrap = refresh_and_enrich_news()
+    predictions, used_cold_start = predict_horizon_points(players, bootstrap, horizon_gws)
+    fixtures_current, teams_current = load_fixtures_and_teams_current(bootstrap)
+    return {
+        "players": players, "bootstrap": bootstrap, "predictions": predictions, "used_cold_start": used_cold_start,
+        "fixtures_current": fixtures_current, "teams_current": teams_current, "horizon_gws": horizon_gws,
+    }
+
+
+# The cheap, per-visitor half of a live run: syncs this visitor's real squad and builds their transfer/captaincy/chip recommendation against the already-computed shared predictions. Fast enough to call live on every page load - no API calls beyond sync_team's 3 lightweight ones, no model inference. differential_aggressiveness/mini_league_ids/session_overrides are that visitor's own session-scoped preferences (see ui/components/session.py), never shared settings.yaml/global state.
+def build_visitor_recommendation(
+    team_id: int, shared: dict, mini_league_ids: list[int] | None = None, session_overrides: dict[int, dict] | None = None,
+    rules=None,
+) -> dict:
+    rules = rules or load_rules()
+    horizon_gws = shared["horizon_gws"]
+    predictions = apply_session_overrides(shared["predictions"], session_overrides or {})
+    snapshot = sync_team(team_id)
+
+    if snapshot is None:
+        squad, starting_xi, bench, all_players, used_cold_start = build_initial_squad()
+        return {
+            "mode": "initial_squad", "squad": squad, "starting_xi": starting_xi, "bench": bench,
+            "all_players": all_players, "used_cold_start": used_cold_start,
+        }
+
+    picks_ids = {pick["player_id"] for pick in snapshot["picks"]}
+    current_squad = predictions[predictions["player_id"].isin(picks_ids)].reset_index(drop=True)
+
+    season_plan, chip_suggestions = _build_season_plan_and_chip_suggestions(
+        current_squad, shared["fixtures_current"], shared["teams_current"], snapshot["gameweek"], team_id,
+        snapshot["chips_used"], mini_league_ids=mini_league_ids,
+    )
+
+    recommendation = recommend_transfers(
+        current_squad, predictions, snapshot["bank"], snapshot["free_transfers"], rules,
+        core_player_ids=season_plan.core_player_ids,
+    )
+    kept = current_squad[~current_squad["player_id"].isin(recommendation["dropped"]["player_id"])]
+    resulting_squad = pd.concat([kept, recommendation["bought"]], ignore_index=True)
+    xi_input = resulting_squad.assign(predicted_points=resulting_squad["horizon_points"] / horizon_gws)
+    starting_xi, bench = select_starting_xi(xi_input, rules)
+    captain, vice_captain = choose_captaincy(starting_xi)
+
+    return {
+        "mode": "live",
+        "gameweek": snapshot["gameweek"],
+        "used_cold_start": shared["used_cold_start"],
+        "bank": snapshot["bank"],
+        "free_transfers": snapshot["free_transfers"],
+        "recommendation": recommendation,
+        "starting_xi": starting_xi,
+        "bench": bench,
+        "captain": captain,
+        "vice_captain": vice_captain,
+        "season_plan": season_plan,
+        "chip_suggestions": chip_suggestions,
+        "all_players": predictions,
+    }
 
 
 # Runs the full live pipeline: refresh, news enrichment, team sync, and either an initial-squad or transfer/captaincy recommendation.

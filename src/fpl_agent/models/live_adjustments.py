@@ -67,3 +67,14 @@ def apply_live_adjustments(predictions: pd.DataFrame, players: pd.DataFrame, cur
     player_status = load_effective_player_status(current_gw)
     adjusted = apply_availability_scaling(predictions, player_status)
     return apply_set_piece_boost(adjusted, players)
+
+
+# Applies one visitor's personal availability corrections on top of the shared predictions - independent of the shared overrides table, never persisted, never visible to any other visitor. A visitor's correction always takes effect even if the shared data hasn't caught up yet, since it's applied as its own scaling pass rather than merged into the shared table.
+def apply_session_overrides(predictions: pd.DataFrame, session_overrides: dict[int, dict]) -> pd.DataFrame:
+    if not session_overrides:
+        return predictions
+    rows = [{"player_id": player_id, **fields} for player_id, fields in session_overrides.items()]
+    session_status = pd.DataFrame(rows)
+    if "chance_of_playing_next_round" in session_status.columns:
+        session_status["chance_of_playing_next_round"] = pd.to_numeric(session_status["chance_of_playing_next_round"], errors="coerce")
+    return apply_availability_scaling(predictions, session_status)
