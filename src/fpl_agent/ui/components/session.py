@@ -38,7 +38,16 @@ def ensure_session_team_id() -> int | None:
     if team_id is not None:
         return team_id
 
-    st.info("Enter your FPL team ID to get recommendations for your own squad (the number after /entry/ in your team's URL).")
+    st.info("Enter your FPL team ID to get recommendations for your own squad.")
+    with st.expander("How do I find my team ID?"):
+        st.markdown(
+            "**On the FPL website:** log in at fantasy.premierleague.com, open **Points** (or **My Team**), "
+            "and look at the page URL - it's the number after `/entry/`, e.g. "
+            "`fantasy.premierleague.com/entry/`**`1234567`**`/event/1`.\n\n"
+            "**On the FPL mobile app:** open the app's menu and choose **View on Web** (or just log in to the "
+            "website above in your phone's browser) - the app itself doesn't show the number directly, but the "
+            "website URL will."
+        )
     entered = st.number_input("Your FPL team ID", min_value=0, step=1, value=0, key="team_id_prompt")
     if entered and st.button("Use this team"):
         set_session_team_id(int(entered))
