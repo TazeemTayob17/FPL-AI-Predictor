@@ -15,8 +15,19 @@ data/news/**
 data/db/*.db
 !data/**/.gitkeep
 
+# Deployment snapshot: the minimal historical + current-season data a Cloud-hosted instance needs
+# to serve real predictions instead of being stuck on cold-start priors. Refreshed locally and
+# re-committed periodically - see the deployment plan for the workflow.
+!data/processed/all_seasons_gw.parquet
+!data/processed/all_seasons_fixtures.parquet
+!data/processed/all_seasons_teams.parquet
+!data/processed/training_table.parquet
+!data/processed/players_current.parquet
+!data/processed/fixtures_current.parquet
+
 models/artifacts/**
 !models/artifacts/.gitkeep
+!models/artifacts/*.txt
 
 .streamlit/
 

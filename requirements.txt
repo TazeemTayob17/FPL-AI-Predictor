@@ -1,0 +1,12 @@
+requests>=2.32
+pandas>=2.2
+pyarrow>=17.0
+lightgbm>=4.5
+ortools>=9.11
+streamlit>=1.38
+pyyaml>=6.0
+feedparser>=6.0
+beautifulsoup4>=4.12
+lxml>=5.3
+python-dotenv>=1.0
+-e .

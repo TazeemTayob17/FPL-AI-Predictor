@@ -2,7 +2,7 @@
 name = "fpl-agent"
 version = "0.1.0"
 description = "Personal FPL AI predictor: squad selection, weekly transfers, captaincy, and chip timing."
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "requests>=2.32",
     "pandas>=2.2",
