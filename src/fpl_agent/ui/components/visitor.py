@@ -22,16 +22,24 @@ def render_visitor_recommendation() -> dict | None:
         st.caption(f"Shared prediction data last refreshed: {format_time_ago(cached_at)}")
     with col2:
         if st.button("Refresh my squad"):
+            st.session_state["_just_refreshed_squad"] = True
             st.rerun()
+
+    if st.session_state.pop("_just_refreshed_squad", False):
+        st.toast("Your squad has been re-synced.")
 
     team_id = ensure_session_team_id()
     if team_id is None:
         return None
 
-    try:
-        return build_visitor_recommendation(
-            team_id, shared, mini_league_ids=get_session_mini_league_ids(), session_overrides=get_session_overrides(),
-        )
-    except Exception as exc:
-        st.error(f"Couldn't build your recommendation: {exc}")
-        return None
+    # Every page load already re-syncs live (no caching, by design - see the module docstring), so this spinner
+    # is what actually shows a visitor that "Refresh my squad" (or just opening the page) is doing real work,
+    # not silently reusing an old result.
+    with st.spinner("Syncing your squad..."):
+        try:
+            return build_visitor_recommendation(
+                team_id, shared, mini_league_ids=get_session_mini_league_ids(), session_overrides=get_session_overrides(),
+            )
+        except Exception as exc:
+            st.error(f"Couldn't build your recommendation: {exc}")
+            return None
