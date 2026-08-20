@@ -2,7 +2,13 @@
 
 import streamlit as st
 
+from fpl_agent.storage.db import init_db
+
 st.set_page_config(page_title="FPL Agent", page_icon="⚽", layout="wide")
+
+# Idempotent (CREATE TABLE IF NOT EXISTS) - ensures a fresh environment (a new clone, a Cloud deploy) has a working
+# schema without a manual `python -m fpl_agent.storage.db --init` step, which only ever ran once on the original dev machine.
+init_db()
 
 pages = [
     st.Page("pages/0_Home.py", title="Home", icon="🏠", default=True),
