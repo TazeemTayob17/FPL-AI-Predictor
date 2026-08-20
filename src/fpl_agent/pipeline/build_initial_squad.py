@@ -14,15 +14,20 @@ from fpl_agent.storage.repository import PROCESSED_DIR
 INITIAL_SQUAD_HORIZON_GWS = 1  # a single-GW-equivalent estimate, matching this entrypoint's original semantics
 
 
-# Loads current players from local storage and returns (squad, starting_xi, bench, all_players, used_cold_start).
-def build_initial_squad() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]:
-    players_path = PROCESSED_DIR / "players_current.parquet"
-    bootstrap = load_latest_json("bootstrap")
-    if not players_path.exists() or bootstrap is None:
-        raise FileNotFoundError(
-            f"{players_path} or the cached bootstrap payload not found - run `python -m fpl_agent.pipeline.refresh_data` first."
-        )
-    players = pd.read_parquet(players_path)
+# Loads current players from local storage (or uses players/bootstrap if already fetched, e.g. from the shared multi-visitor cache) and returns (squad, starting_xi, bench, all_players, used_cold_start).
+def build_initial_squad(
+    players: pd.DataFrame | None = None, bootstrap: dict | None = None
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, bool]:
+    if players is None:
+        players_path = PROCESSED_DIR / "players_current.parquet"
+        if not players_path.exists():
+            raise FileNotFoundError(f"{players_path} not found - run `python -m fpl_agent.pipeline.refresh_data` first.")
+        players = pd.read_parquet(players_path)
+    if bootstrap is None:
+        bootstrap = load_latest_json("bootstrap")
+        if bootstrap is None:
+            raise FileNotFoundError("No cached bootstrap payload found - run `python -m fpl_agent.pipeline.refresh_data` first.")
+
     all_players, used_cold_start = predict_horizon_points(players, bootstrap, horizon_gws=INITIAL_SQUAD_HORIZON_GWS)
     squad, starting_xi, bench = select_squad_and_starting_xi(all_players)
     return squad, starting_xi, bench, all_players, used_cold_start

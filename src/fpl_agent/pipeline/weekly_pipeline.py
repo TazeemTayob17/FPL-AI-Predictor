@@ -153,7 +153,7 @@ def build_visitor_recommendation(
     snapshot = sync_team(team_id)
 
     if snapshot is None:
-        squad, starting_xi, bench, all_players, used_cold_start = build_initial_squad()
+        squad, starting_xi, bench, all_players, used_cold_start = build_initial_squad(shared["players"], shared["bootstrap"])
         return {
             "mode": "initial_squad", "squad": squad, "starting_xi": starting_xi, "bench": bench,
             "all_players": all_players, "used_cold_start": used_cold_start,

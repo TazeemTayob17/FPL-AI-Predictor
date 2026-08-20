@@ -195,19 +195,28 @@ def test_refresh_shared_predictions_returns_the_expected_shared_bundle(monkeypat
 
 SHARED = {
     "predictions": PREDICTIONS, "used_cold_start": False, "fixtures_current": None, "teams_current": None, "horizon_gws": 5,
+    "players": PLAYERS, "bootstrap": BOOTSTRAP_PRE_SEASON,
 }
 
 
-# Pre-deadline (sync_team returns None), build_visitor_recommendation must fall back to the initial-squad recommendation, exactly like run_live.
+# Pre-deadline (sync_team returns None), build_visitor_recommendation must fall back to the initial-squad recommendation, passing the already-fetched shared players/bootstrap through rather than re-reading local files (that's what broke on a stateless Cloud deploy - see build_initial_squad's new optional params).
 def test_build_visitor_recommendation_returns_initial_squad_when_no_live_squad_yet(monkeypatch):
     squad = pd.DataFrame([{"web_name": "p1"}])
     all_players = pd.DataFrame([{"web_name": "p1"}, {"web_name": "p2"}])
+    captured = {}
+
+    def fake_build_initial_squad(players, bootstrap):
+        captured["players"], captured["bootstrap"] = players, bootstrap
+        return squad, squad, squad, all_players, True
+
     monkeypatch.setattr(weekly_pipeline, "sync_team", lambda team_id: None)
-    monkeypatch.setattr(weekly_pipeline, "build_initial_squad", lambda: (squad, squad, squad, all_players, True))
+    monkeypatch.setattr(weekly_pipeline, "build_initial_squad", fake_build_initial_squad)
 
     result = weekly_pipeline.build_visitor_recommendation(123, SHARED)
     assert result["mode"] == "initial_squad"
     assert result["squad"] is squad
+    assert captured["players"] is SHARED["players"]
+    assert captured["bootstrap"] is SHARED["bootstrap"]
 
 
 # With a live squad synced, build_visitor_recommendation must produce the same shape of live recommendation run_live does, but from the already-computed shared predictions (no predict_horizon_points call).
