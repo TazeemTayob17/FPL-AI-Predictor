@@ -16,7 +16,7 @@ PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
 UNLIMITED_TRANSFER_CHIPS = {"wildcard", "freehit"}
 
 PLAYER_COLUMNS = [
-    "player_id", "web_name", "web_name_full", "team_id", "team_name", "team_short", "position",
+    "player_id", "web_name", "web_name_full", "team_id", "team_name", "team_short", "team_code", "position",
     "now_cost_million", "form", "total_points", "selected_by_percent",
     "status", "news", "chance_of_playing_this_round", "chance_of_playing_next_round",
     "transfers_in_event", "transfers_out_event", "cost_change_event",
@@ -52,6 +52,7 @@ def _build_players_frame(bootstrap: dict) -> pd.DataFrame:
     positions = pd.DataFrame(bootstrap["element_types"])[["id", "singular_name_short"]].rename(
         columns={"id": "element_type", "singular_name_short": "position"}
     )
+    # elements already carries its own team_code field (the club's stable code, straight from the API) - no merge needed for it.
     players = elements.merge(teams, on="team", how="left").merge(positions, on="element_type", how="left")
     players["now_cost_million"] = players["now_cost"] / 10
     players["form"] = pd.to_numeric(players["form"], errors="coerce")

@@ -3,6 +3,7 @@
 import pandas as pd
 import streamlit as st
 
+from fpl_agent.optimizer.captaincy import choose_captaincy
 from fpl_agent.optimizer.constraints import load_rules
 from fpl_agent.ui.components.staleness import render_staleness_and_refresh
 from fpl_agent.ui.components.theme import inject_fpl_css, render_pitch
@@ -31,6 +32,8 @@ else:
 
     st.metric("Squad value", f"£{squad['now_cost_million'].sum():.1f}m / £{rules.budget_million:.1f}m")
 
-    captain_name = result.get("captain", {}).get("web_name") if result["mode"] == "live" else None
-    vice_captain_name = result.get("vice_captain", {}).get("web_name") if result["mode"] == "live" else None
-    render_pitch(starting_xi, bench, captain_name, vice_captain_name)
+    if result["mode"] == "live":
+        captain, vice_captain = result["captain"], result["vice_captain"]
+    else:
+        captain, vice_captain = choose_captaincy(starting_xi)
+    render_pitch(starting_xi, bench, captain["web_name"], vice_captain["web_name"])

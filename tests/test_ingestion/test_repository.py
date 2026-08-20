@@ -9,7 +9,7 @@ SAMPLE_BOOTSTRAP = {
     "elements": [
         {
             "id": 1, "first_name": "Erling", "second_name": "Haaland", "web_name": "Haaland",
-            "team": 1, "element_type": 4, "now_cost": 150, "form": "5.2", "total_points": 20,
+            "team": 1, "team_code": 43, "element_type": 4, "now_cost": 150, "form": "5.2", "total_points": 20,
             "selected_by_percent": "45.3", "status": "a", "news": "",
             "chance_of_playing_this_round": None, "chance_of_playing_next_round": None,
             "transfers_in_event": 1000, "transfers_out_event": 200, "cost_change_event": 1,
@@ -29,6 +29,7 @@ def test_build_players_frame_joins_team_and_position():
     players = _build_players_frame(SAMPLE_BOOTSTRAP)
     row = players.iloc[0]
     assert row["team_short"] == "MCI"
+    assert row["team_code"] == 43
     assert row["position"] == "FWD"
     assert row["now_cost_million"] == 15.0
     assert row["form"] == 5.2

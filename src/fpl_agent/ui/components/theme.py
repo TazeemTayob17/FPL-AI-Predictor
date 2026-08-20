@@ -5,6 +5,8 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from fpl_agent.ui.components.fixtures import next_fixture_by_team
+
 PURPLE = "#37003c"
 PURPLE_LIGHT = "#6b2f74"
 GREEN = "#00ff85"
@@ -131,50 +133,92 @@ def points_col_for(df: pd.DataFrame) -> str:
     return "horizon_points" if "horizon_points" in df.columns else "predicted_points"
 
 
-# Renders one player as a shirt-style card: position-colored top bar and label, name, team/price, predicted points.
-def _player_card_html(row: pd.Series, points_col: str, badge: str | None = None) -> str:
+SHIRT_BASE_URL = "https://fantasy.premierleague.com/dist/img/shirts/standard"
+
+
+# The real FPL shirt image for this player's club (goalkeepers get a distinct kit), served from FPL's own public CDN and keyed by the club's stable code - never a locally stored/hardcoded image, so it always matches the actual current-season kit.
+def _shirt_url(team_code, position: str) -> str | None:
+    if pd.isna(team_code):
+        return None
+    suffix = "_1" if position == "GKP" else ""
+    return f"{SHIRT_BASE_URL}/shirt_{int(team_code)}{suffix}-66.png"
+
+
+# Traffic-light color for a fixture's difficulty rating (1-5, from FPL's own data): green for favorable, pink for tough, neutral for average.
+def _fixture_difficulty_colors(difficulty) -> tuple[str, str]:
+    if difficulty is None or pd.isna(difficulty):
+        return BORDER, MUTED
+    if difficulty <= 2:
+        return "#baf7d6", "#0a6b3f"
+    if difficulty == 3:
+        return "#f1ecf5", PURPLE
+    return "#f7c9d9", "#8a0038"
+
+
+# Renders one player as a kit card: real team shirt image, a captain/vice-captain/nailed-on badge, name, next fixture (opponent + home/away, colored by difficulty), and price/predicted points.
+def _player_card_html(row: pd.Series, points_col: str, fixtures_by_team: dict, badge: str | None = None) -> str:
     position = row.get("position", "")
-    color = POSITION_COLORS.get(position, "#999999")
     points = row.get(points_col, 0)
     price = row.get("now_cost_million", 0)
+    shirt_url = _shirt_url(row.get("team_code"), position)
+
+    shirt_html = (
+        f'<img src="{shirt_url}" alt="{position} shirt" style="width:58px; height:auto; display:block; '
+        'filter:drop-shadow(0 3px 5px rgba(0,0,0,0.4));" />'
+        if shirt_url else
+        f'<div style="width:58px; height:58px; border-radius:8px; background:{POSITION_COLORS.get(position, "#999999")};"></div>'
+    )
+
+    if badge:
+        badge_bg = PINK if badge == "C" else PURPLE
+        badge_content = badge
+    else:
+        badge_bg, badge_content = "#ffd400", "&#10003;"
+    badge_color = "white" if badge else PURPLE
     badge_html = (
-        f'<span style="position:absolute; top:6px; right:8px; background:{PINK}; color:white; '
-        f'font-size:0.65rem; font-weight:800; border-radius:50%; width:20px; height:20px; '
-        f'box-shadow:0 1px 3px rgba(0,0,0,0.3); display:flex; align-items:center; justify-content:center;">{badge}</span>'
-        if badge else ""
+        f'<span style="position:absolute; top:-4px; left:-4px; background:{badge_bg}; color:{badge_color}; '
+        'font-size:0.62rem; font-weight:900; border-radius:50%; width:19px; height:19px; z-index:2; '
+        f'box-shadow:0 1px 3px rgba(0,0,0,0.4); display:flex; align-items:center; justify-content:center;">{badge_content}</span>'
     )
-    card_style = (
-        "position:relative; background:white; border-radius:10px; flex:1 1 108px; min-width:96px; max-width:140px; "
-        "box-shadow:0 3px 10px rgba(0,0,0,0.22); overflow:hidden;"
-    )
-    name_style = f"font-weight:700; font-size:0.85rem; color:{PURPLE}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"
+
+    fixture = fixtures_by_team.get(row.get("team_id"))
+    if fixture:
+        venue = "H" if fixture["is_home"] else "A"
+        fixture_bg, fixture_color = _fixture_difficulty_colors(fixture.get("difficulty"))
+        fixture_text = f'{fixture["opponent_short"]} ({venue})'
+    else:
+        fixture_bg, fixture_color, fixture_text = BORDER, MUTED, "-"
+
+    name_style = f"font-weight:700; font-size:0.8rem; color:{PURPLE}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"
     return (
-        f'<div style="{card_style}">{badge_html}'
-        f'<div style="background:{color}; height:7px;"></div>'
-        f'<div style="padding:8px 9px 9px;">'
-        f'<div style="font-size:0.6rem; font-weight:700; color:{color}; letter-spacing:0.04em;">{position}</div>'
-        f'<div style="{name_style}">{row.get("web_name", "")}</div>'
-        f'<div style="font-size:0.7rem; color:#666; margin-top:1px;">{row.get("team_short", "")} &middot; £{price:.1f}m</div>'
-        f'<div style="font-size:0.8rem; font-weight:800; color:{PURPLE}; margin-top:3px;">{points:.1f} <span style="font-weight:500; font-size:0.65rem;">pts</span></div>'
-        f'</div></div>'
+        '<div style="flex:1 1 96px; min-width:88px; max-width:124px; text-align:center;">'
+        f'<div style="position:relative; display:inline-block;">{badge_html}{shirt_html}</div>'
+        f'<div style="background:white; padding:3px 6px 2px; margin-top:2px; {name_style}">{row.get("web_name", "")}</div>'
+        f'<div style="background:{fixture_bg}; color:{fixture_color}; padding:2px 6px; font-weight:700; font-size:0.64rem;">{fixture_text}</div>'
+        f'<div style="background:{SURFACE}; color:{MUTED}; padding:2px 6px; font-weight:600; font-size:0.6rem; '
+        f'border-radius:0 0 6px 6px; box-shadow:0 2px 6px rgba(0,0,0,0.15);">£{price:.1f}m &middot; {points:.1f}pts</div>'
+        '</div>'
     )
 
 
 # Lays out one position row (or the bench) as a flexbox of player cards, wrapping on narrow (phone) screens.
-def _row_html(players: pd.DataFrame, points_col: str, captain_name: str | None, vice_captain_name: str | None) -> str:
+def _row_html(
+    players: pd.DataFrame, points_col: str, fixtures_by_team: dict, captain_name: str | None, vice_captain_name: str | None
+) -> str:
     cards = []
     for _, player in players.sort_values(points_col, ascending=False).iterrows():
         badge = "C" if player.get("web_name") == captain_name else ("V" if player.get("web_name") == vice_captain_name else None)
-        cards.append(_player_card_html(player, points_col, badge))
+        cards.append(_player_card_html(player, points_col, fixtures_by_team, badge))
     return f'<div style="display:flex; flex-wrap:wrap; gap:12px; justify-content:center; margin-bottom:22px; position:relative; z-index:1;">{"".join(cards)}</div>'
 
 
 # Renders the starting XI as a green pitch (GKP at the bottom, FWD at the top, with markings) plus a bench strip below.
 def render_pitch(starting_xi: pd.DataFrame, bench: pd.DataFrame, captain_name: str | None = None, vice_captain_name: str | None = None) -> None:
+    fixtures_by_team = next_fixture_by_team()
     points_col = points_col_for(starting_xi)
     pitch_rows = [p for p in reversed(POSITION_ORDER) if p in starting_xi["position"].values]
     rows_html = "".join(
-        _row_html(starting_xi[starting_xi["position"] == position], points_col, captain_name, vice_captain_name)
+        _row_html(starting_xi[starting_xi["position"] == position], points_col, fixtures_by_team, captain_name, vice_captain_name)
         for position in pitch_rows
     )
     markings_html = (
@@ -199,6 +243,6 @@ def render_pitch(starting_xi: pd.DataFrame, bench: pd.DataFrame, captain_name: s
     )
     bench_html = (
         f'<div style="background:{BORDER}; border-radius:14px; padding:16px 14px;">'
-        f'{_row_html(bench, points_col_for(bench), None, None)}</div>'
+        f'{_row_html(bench, points_col_for(bench), fixtures_by_team, None, None)}</div>'
     )
     st.markdown(bench_html, unsafe_allow_html=True)
