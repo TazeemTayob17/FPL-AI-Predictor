@@ -180,3 +180,34 @@ def test_select_squad_and_starting_xi_prefers_a_reliable_bench_player_over_an_eq
 def test_select_squad_and_starting_xi_falls_back_to_flat_bench_weight_without_volatility_data():
     squad, starting_xi, bench = select_squad_and_starting_xi(JOINT_POOL, JOINT_RULES, bench_weight_percent=5)
     assert sorted(squad["web_name"]) == ["gk_backup_cheap", "gk_starter", "mid_great"]
+
+
+CLUB_DIVERSITY_RULES = SquadRules(
+    budget_million=100.0, squad_size=5,
+    squad_composition={"GKP": 1, "DEF": 2, "MID": 1, "FWD": 1},
+    starting_xi_size=2,
+    formation_min={"GKP": 1, "DEF": 0, "MID": 1, "FWD": 0},
+    max_players_per_club=3, captain_multiplier=2, triple_captain_multiplier=3,
+)
+
+# GK and MID are forced starters (only 1 candidate each); DEF/FWD are structurally all bench (formation_min lets the XI stop at GK+MID). The two best DEF and the one best FWD all happen to be the same club - unconstrained, that would put all 3 bench slots on one team.
+CLUB_DIVERSITY_POOL = pd.DataFrame(
+    [
+        _player("gk1", "C1", "GKP", 5, 30),
+        _player("mid1", "C2", "MID", 5, 25),
+        _player("def_eve_a", "EVE", "DEF", 4, 10),
+        _player("def_eve_b", "EVE", "DEF", 4, 9),
+        _player("def_other", "OTH", "DEF", 4, 8),
+        _player("fwd_eve", "EVE", "FWD", 4, 8),
+        _player("fwd_other", "OTH2", "FWD", 4, 6),
+    ]
+)
+
+
+# Regression test for the Everton-bench issue: the optimizer must never put more than MAX_BENCH_PLAYERS_PER_CLUB players from one club on the bench, even when that club's players are individually the highest-scoring bench-eligible options.
+def test_select_squad_and_starting_xi_caps_bench_players_from_one_club():
+    squad, starting_xi, bench = select_squad_and_starting_xi(CLUB_DIVERSITY_POOL, CLUB_DIVERSITY_RULES)
+    bench_club_counts = bench["team_name"].value_counts()
+    assert bench_club_counts.max() <= 2
+    assert bench_club_counts["EVE"] == 2
+    assert "def_other" in set(bench["web_name"])  # the lower-scoring non-EVE option gets pulled in to satisfy the cap

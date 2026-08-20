@@ -13,6 +13,7 @@ BENCH_POINTS_WEIGHT_PERCENT = 5  # flat fallback when no minutes_volatility sign
 BASE_BENCH_POINTS_WEIGHT_PERCENT = 2  # weight for a highly rotation-prone bench player
 RELIABLE_BENCH_BONUS_PERCENT = 8  # extra weight for a bench player with rock-solid, consistent minutes - up to 10% total, rewarding genuine auto-sub "insurance" picks over pure cost-cutting
 MINUTES_VOLATILITY_CAP = 45  # one full match's worth of swing in minutes, matching captaincy.py's existing risk-score normalization
+MAX_BENCH_PLAYERS_PER_CLUB = 2  # caps correlated risk: a bad week for one club (rotation, injuries, a postponement) must not be able to wipe out the whole bench's insurance value at once
 
 
 class InfeasibleSquadError(Exception):
@@ -112,6 +113,7 @@ def select_squad_and_starting_xi(
     for club in players["team_name"].unique():
         idx = players.index[players["team_name"] == club].tolist()
         model.add(sum(picks[i] for i in idx) <= rules.max_players_per_club)
+        model.add(sum(picks[i] - starts[i] for i in idx) <= MAX_BENCH_PLAYERS_PER_CLUB)
 
     gkp_idx = players.index[players["position"] == "GKP"].tolist()
     model.add(sum(starts[i] for i in gkp_idx) == 1)
