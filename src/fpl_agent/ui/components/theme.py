@@ -163,10 +163,10 @@ def _player_card_html(row: pd.Series, points_col: str, fixtures_by_team: dict, b
     shirt_url = _shirt_url(row.get("team_code"), position)
 
     shirt_html = (
-        f'<img src="{shirt_url}" alt="{position} shirt" style="width:58px; height:auto; display:block; '
-        'filter:drop-shadow(0 3px 5px rgba(0,0,0,0.4));" />'
+        f'<img src="{shirt_url}" alt="{position} shirt" style="width:46px; height:auto; display:block; '
+        'filter:drop-shadow(0 2px 4px rgba(0,0,0,0.4));" />'
         if shirt_url else
-        f'<div style="width:58px; height:58px; border-radius:8px; background:{POSITION_COLORS.get(position, "#999999")};"></div>'
+        f'<div style="width:46px; height:46px; border-radius:7px; background:{POSITION_COLORS.get(position, "#999999")};"></div>'
     )
 
     if badge:
@@ -176,8 +176,8 @@ def _player_card_html(row: pd.Series, points_col: str, fixtures_by_team: dict, b
         badge_bg, badge_content = "#ffd400", "&#10003;"
     badge_color = "white" if badge else PURPLE
     badge_html = (
-        f'<span style="position:absolute; top:-4px; left:-4px; background:{badge_bg}; color:{badge_color}; '
-        'font-size:0.62rem; font-weight:900; border-radius:50%; width:19px; height:19px; z-index:2; '
+        f'<span style="position:absolute; top:-3px; left:-3px; background:{badge_bg}; color:{badge_color}; '
+        'font-size:0.56rem; font-weight:900; border-radius:50%; width:16px; height:16px; z-index:2; '
         f'box-shadow:0 1px 3px rgba(0,0,0,0.4); display:flex; align-items:center; justify-content:center;">{badge_content}</span>'
     )
 
@@ -189,14 +189,14 @@ def _player_card_html(row: pd.Series, points_col: str, fixtures_by_team: dict, b
     else:
         fixture_bg, fixture_color, fixture_text = BORDER, MUTED, "-"
 
-    name_style = f"font-weight:700; font-size:0.8rem; color:{PURPLE}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"
+    name_style = f"font-weight:700; font-size:0.7rem; color:{PURPLE}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; line-height:1.25;"
     return (
-        '<div style="flex:1 1 96px; min-width:88px; max-width:124px; text-align:center;">'
+        '<div style="flex:1 1 76px; min-width:68px; max-width:96px; text-align:center;">'
         f'<div style="position:relative; display:inline-block;">{badge_html}{shirt_html}</div>'
-        f'<div style="background:white; padding:3px 6px 2px; margin-top:2px; {name_style}">{row.get("web_name", "")}</div>'
-        f'<div style="background:{fixture_bg}; color:{fixture_color}; padding:2px 6px; font-weight:700; font-size:0.64rem;">{fixture_text}</div>'
-        f'<div style="background:{SURFACE}; color:{MUTED}; padding:2px 6px; font-weight:600; font-size:0.6rem; '
-        f'border-radius:0 0 6px 6px; box-shadow:0 2px 6px rgba(0,0,0,0.15);">£{price:.1f}m &middot; {points:.1f}pts</div>'
+        f'<div style="background:white; padding:2px 4px; margin-top:1px; {name_style}">{row.get("web_name", "")}</div>'
+        f'<div style="background:{fixture_bg}; color:{fixture_color}; padding:1px 4px; font-weight:700; font-size:0.58rem; line-height:1.3;">{fixture_text}</div>'
+        f'<div style="background:{SURFACE}; color:{MUTED}; padding:1px 4px; font-weight:600; font-size:0.54rem; line-height:1.3; '
+        f'border-radius:0 0 6px 6px; box-shadow:0 1px 4px rgba(0,0,0,0.15);">£{price:.1f}m &middot; {points:.1f}pts</div>'
         '</div>'
     )
 
@@ -209,7 +209,7 @@ def _row_html(
     for _, player in players.sort_values(points_col, ascending=False).iterrows():
         badge = "C" if player.get("web_name") == captain_name else ("V" if player.get("web_name") == vice_captain_name else None)
         cards.append(_player_card_html(player, points_col, fixtures_by_team, badge))
-    return f'<div style="display:flex; flex-wrap:wrap; gap:12px; justify-content:center; margin-bottom:22px; position:relative; z-index:1;">{"".join(cards)}</div>'
+    return f'<div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-bottom:12px; position:relative; z-index:1;">{"".join(cards)}</div>'
 
 
 # Renders the starting XI as a green pitch (GKP at the bottom, FWD at the top, with markings) plus a bench strip below.
@@ -224,25 +224,25 @@ def render_pitch(starting_xi: pd.DataFrame, bench: pd.DataFrame, captain_name: s
     markings_html = (
         '<div style="position:absolute; inset:0; pointer-events:none;">'
         '<div style="position:absolute; top:50%; left:0; right:0; height:2px; background:rgba(255,255,255,0.28);"></div>'
-        '<div style="position:absolute; top:50%; left:50%; width:120px; height:120px; margin:-60px 0 0 -60px; '
+        '<div style="position:absolute; top:50%; left:50%; width:90px; height:90px; margin:-45px 0 0 -45px; '
         'border:2px solid rgba(255,255,255,0.28); border-radius:50%;"></div>'
-        '<div style="position:absolute; inset:10px; border:2px solid rgba(255,255,255,0.22); border-radius:8px;"></div>'
+        '<div style="position:absolute; inset:8px; border:2px solid rgba(255,255,255,0.22); border-radius:8px;"></div>'
         "</div>"
     )
     pitch_html = (
-        '<div style="position:relative; background: repeating-linear-gradient(180deg, #1f8a3e, #1f8a3e 40px, '
-        f'#249147 40px, #249147 80px); border-radius:16px; padding:24px 14px; box-shadow:0 4px 18px rgba(0,0,0,0.15);">'
+        '<div style="position:relative; background: repeating-linear-gradient(180deg, #1f8a3e, #1f8a3e 30px, '
+        f'#249147 30px, #249147 60px); border-radius:14px; padding:16px 10px; box-shadow:0 4px 18px rgba(0,0,0,0.15);">'
         f'{markings_html}{rows_html}</div>'
     )
     st.markdown(pitch_html, unsafe_allow_html=True)
 
     st.markdown(
-        f'<div style="margin-top:1.5rem; margin-bottom:0.5rem; font-weight:700; color:{PURPLE}; '
-        'font-size:0.8rem; letter-spacing:0.04em; text-transform:uppercase;">Bench</div>',
+        f'<div style="margin-top:0.9rem; margin-bottom:0.35rem; font-weight:700; color:{PURPLE}; '
+        'font-size:0.75rem; letter-spacing:0.04em; text-transform:uppercase;">Bench</div>',
         unsafe_allow_html=True,
     )
     bench_html = (
-        f'<div style="background:{BORDER}; border-radius:14px; padding:16px 14px;">'
+        f'<div style="background:{BORDER}; border-radius:12px; padding:12px 8px;">'
         f'{_row_html(bench, points_col_for(bench), fixtures_by_team, None, None)}</div>'
     )
     st.markdown(bench_html, unsafe_allow_html=True)
