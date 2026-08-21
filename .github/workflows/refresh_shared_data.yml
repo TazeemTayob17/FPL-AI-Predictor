@@ -1,0 +1,35 @@
+name: Refresh shared predictions
+
+on:
+  schedule:
+    # Times are UTC (GitHub Actions cron doesn't support timezones) - 08:00 and 21:00 UTC = 10am and 11pm at UTC+2.
+    - cron: "0 8 * * *"
+    - cron: "0 21 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Refresh shared predictions
+        run: python scripts/refresh_shared_data.py
+
+      - name: Commit and push if the data changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/processed/players_current.parquet data/processed/fixtures_current.parquet data/processed/shared_predictions.pkl
+          git diff --cached --quiet || git commit -m "Scheduled data refresh"
+          git push
